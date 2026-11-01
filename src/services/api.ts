@@ -1,4 +1,6 @@
-import { Platform, Linking } from 'react-native';
+import { Platform } from 'react-native';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { Storage } from './storage';
 import { UserAccount, DriveAccount } from '../types';
 
@@ -258,7 +260,7 @@ export const Api = {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       returnTo = window.location.origin;
     } else {
-      returnTo = 'readspace://auth';
+      returnTo = Linking.createURL('auth');
     }
     return `${base}/api/auth/google/start?drive=${withDrive ? '1' : '0'}&returnTo=${encodeURIComponent(returnTo)}`;
   },
@@ -318,6 +320,42 @@ export const Api = {
       // If popup was blocked by browser, fallback to standard redirect
       window.location.href = url;
     } else {
+      const redirectUrl = Linking.createURL('auth');
+      try {
+        await WebBrowser.warmUpAsync().catch(() => {});
+        const result = await WebBrowser.openAuthSessionAsync(url, redirectUrl);
+        await WebBrowser.coolDownAsync().catch(() => {});
+
+        if (result.type === 'success' && result.url) {
+          let query = '';
+          if (result.url.includes('?')) query = result.url.split('?')[1];
+          else if (result.url.includes('#')) query = result.url.split('#')[1];
+
+          const params = new URLSearchParams(query);
+          const token = params.get('token');
+          const drive = params.get('drive') === '1' || params.get('drive_connected') === '1';
+
+          if (token) {
+            await Storage.saveSessionToken(token);
+          }
+          if (drive) {
+            await Storage.saveDriveAccount({ connected: true });
+          }
+          const synced = await this.syncSession();
+          if (onSuccess) onSuccess(synced);
+          return;
+        }
+      } catch (browserErr) {
+        console.warn('WebBrowser auth session error, fallback to Linking:', browserErr);
+      }
+
+      // Check if deep link handler in App.tsx already captured credentials while tab was closing
+      const current = await this.syncSession();
+      if (current.user && onSuccess) {
+        onSuccess(current);
+        return;
+      }
+
       await Linking.openURL(url);
     }
   },

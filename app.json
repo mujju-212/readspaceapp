@@ -2,6 +2,7 @@
   "expo": {
     "name": "ReadSpace",
     "slug": "readspace-app",
+    "scheme": "readspace",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",

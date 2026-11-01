@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import * as Linking from 'expo-linking';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { Storage } from './src/services/storage';
+import { Api } from './src/services/api';
 import { ReaderSettings } from './src/types';
 import { THEMES } from './src/theme/colors';
 
@@ -35,6 +37,41 @@ export default function App() {
       }
     }
 
+    // Listen for incoming deep link URLs (e.g. readspace://auth?signedin=1&token=... or exp://...)
+    const handleDeepLink = async (eventOrUrl: { url: string } | string | null) => {
+      const url = typeof eventOrUrl === 'string' ? eventOrUrl : eventOrUrl?.url;
+      if (!url) return;
+      try {
+        if (
+          url.startsWith('readspace://') ||
+          url.startsWith('exp://') ||
+          url.includes('signedin=1') ||
+          url.includes('token=')
+        ) {
+          let query = '';
+          if (url.includes('?')) query = url.split('?')[1];
+          else if (url.includes('#')) query = url.split('#')[1];
+
+          const params = new URLSearchParams(query);
+          const token = params.get('token');
+          const drive = params.get('drive') === '1' || params.get('drive_connected') === '1';
+
+          if (token) {
+            await Storage.saveSessionToken(token);
+            if (drive) {
+              await Storage.saveDriveAccount({ connected: true });
+            }
+            await Api.syncSession();
+          }
+        }
+      } catch (err) {
+        console.warn('Error handling deep link:', err);
+      }
+    };
+
+    void Linking.getInitialURL().then(handleDeepLink);
+    const sub = Linking.addEventListener('url', handleDeepLink);
+
     const init = async () => {
       try {
         const saved = await Storage.getSettings();
@@ -46,6 +83,10 @@ export default function App() {
       }
     };
     init();
+
+    return () => {
+      sub.remove();
+    };
   }, []);
 
   const handleUpdateSettings = async (partial: Partial<ReaderSettings>) => {
