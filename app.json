@@ -35,7 +35,10 @@
         "WRITE_EXTERNAL_STORAGE",
         "READ_MEDIA_IMAGES",
         "READ_MEDIA_VIDEO",
-        "READ_MEDIA_AUDIO"
+        "READ_MEDIA_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET"
       ]
     },
     "web": {
@@ -45,6 +48,12 @@
       "expo-asset",
       "expo-document-picker",
       "expo-file-system"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b0cbaa86-1437-43fa-b961-72346d135b9a"
+      }
+    },
+    "owner": "mujju-212"
   }
 }
