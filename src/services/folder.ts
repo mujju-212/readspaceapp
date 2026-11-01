@@ -356,7 +356,8 @@ export async function scanDirectoryUri(
 ): Promise<FolderEntry[]> {
   if (!StorageAccessFramework) return [];
   try {
-    const uris = await StorageAccessFramework.readDirectoryAsync(dirUri);
+    const targetUri = buildSafSubTreeUri(dirUri);
+    const uris = await StorageAccessFramework.readDirectoryAsync(targetUri);
     const results: FolderEntry[] = [];
 
     for (const itemUri of uris) {
@@ -375,11 +376,13 @@ export async function scanDirectoryUri(
       if (isDirectory) {
         if (currentDepth < maxDepth) {
           try {
-            const subUris = await StorageAccessFramework.readDirectoryAsync(itemUri);
+            const subTreeUri = buildSafSubTreeUri(itemUri);
+            const subUris = await StorageAccessFramework.readDirectoryAsync(subTreeUri);
             const isLoop =
-              subUris.includes(itemUri) ||
-              subUris.includes(dirUri) ||
-              (uris.length > 0 && subUris.length === uris.length && subUris[0] === uris[0]);
+              subUris.length > 0 &&
+              (subUris.includes(itemUri) ||
+                subUris.includes(targetUri) ||
+                (uris.length > 0 && subUris.length === uris.length && subUris[0] === uris[0]));
 
             if (isLoop) {
               children = [];
@@ -612,6 +615,9 @@ export async function openFolderEntry(entry: FolderEntry): Promise<MobileDoc> {
           // fallback
         }
       }
+    } else if (kind === 'image' && (Platform.OS as string) !== 'web' && entry.uri) {
+      // Direct native streaming: avoid reading multi-megabyte base64 strings into JS memory
+      base64Data = undefined;
     } else if (entry.uri.startsWith('content://') && StorageAccessFramework) {
       base64Data = await StorageAccessFramework.readAsStringAsync(entry.uri, {
         encoding: FileSystem.EncodingType.Base64,

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { View, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Platform, Image, Text, ScrollView } from 'react-native';
 import { MobileDoc, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
 import {
@@ -29,6 +29,34 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
   const webViewRef = useRef<any>(null);
   const iframeRef = useRef<any>(null);
   const themeColors = THEMES[settings.theme];
+
+  // 1. High-Performance Native Image Engine on Mobile
+  if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {
+    const imageUri = doc.base64Data
+      ? (doc.base64Data.startsWith('data:') ? doc.base64Data : `data:${doc.mime || 'image/jpeg'};base64,${doc.base64Data}`)
+      : doc.uri;
+
+    return (
+      <View style={[styles.container, styles.imageNativeContainer, { backgroundColor: themeColors.bg }]}>
+        <ScrollView
+          contentContainerStyle={styles.imageScrollContent}
+          maximumZoomScale={3}
+          minimumZoomScale={1}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
+        >
+          <Image
+            source={{ uri: imageUri }}
+            style={styles.nativeImage}
+            resizeMode="contain"
+          />
+        </ScrollView>
+        <Text style={[styles.imageInfoBar, { color: themeColors.muted }]} numberOfLines={1}>
+          {doc.name}
+        </Text>
+      </View>
+    );
+  }
 
   // Listen for window message on Web
   useEffect(() => {
@@ -88,26 +116,31 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
   <!-- Offline-bundled document engines (Guaranteed zero-network execution) -->
   <script>
   (function() {
-    function loadBundle(b64) {
+    function runBundle(b64) {
       if (!b64) return;
       try {
-        var code = decodeURIComponent(escape(atob(b64)));
-        var s = document.createElement('script');
-        s.textContent = code;
-        document.head.appendChild(s);
+        var code = atob(b64);
+        (0, eval)(code);
       } catch(e) {
         try {
-          var s2 = document.createElement('script');
-          s2.textContent = atob(b64);
-          document.head.appendChild(s2);
-        } catch(e2) {}
+          var code2 = decodeURIComponent(escape(atob(b64)));
+          (0, eval)(code2);
+        } catch(e2) {
+          try {
+            var s = document.createElement('script');
+            s.textContent = atob(b64);
+            document.head.appendChild(s);
+          } catch(e3) {
+            console.warn('Bundle load error:', e3);
+          }
+        }
       }
     }
-    loadBundle(${JSON.stringify(OFFLINE_MARKED_B64)});
-    loadBundle(${JSON.stringify(OFFLINE_DOMPURIFY_B64)});
-    loadBundle(${JSON.stringify(OFFLINE_JSZIP_B64)});
-    loadBundle(${JSON.stringify(OFFLINE_MAMMOTH_B64)});
-    loadBundle(${JSON.stringify(OFFLINE_PDFJS_B64)});
+    runBundle(${JSON.stringify(OFFLINE_MARKED_B64)});
+    runBundle(${JSON.stringify(OFFLINE_DOMPURIFY_B64)});
+    runBundle(${JSON.stringify(OFFLINE_JSZIP_B64)});
+    runBundle(${JSON.stringify(OFFLINE_MAMMOTH_B64)});
+    runBundle(${JSON.stringify(OFFLINE_PDFJS_B64)});
   })();
   </script>
   <!-- CDNs for fallback when online -->
@@ -620,8 +653,11 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           }
 
           let dirty = '';
-          if (typeof marked !== 'undefined') {
-            dirty = marked.parse(rawText || '');
+          var markedParser = (typeof marked !== 'undefined' ? marked : (typeof window !== 'undefined' ? window.marked : null));
+          if (markedParser && typeof markedParser.parse === 'function') {
+            dirty = markedParser.parse(rawText || '');
+          } else if (typeof markedParser === 'function') {
+            dirty = markedParser(rawText || '');
           } else {
             dirty = '<pre>' + escapeHtml(rawText || '') + '</pre>';
           }
@@ -649,7 +685,8 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
             ADD_ATTR: ['target', 'id', 'xlink:href'],
             HTML_INTEGRATION_POINTS: { 'annotation-xml': true, foreignobject: true, desc: true, title: true }
           };
-          const clean = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(dirty, MD_SANITIZE) : dirty;
+          const sanitizer = (typeof DOMPurify !== 'undefined' ? DOMPurify : (typeof window !== 'undefined' ? window.DOMPurify : null));
+          const clean = (sanitizer && typeof sanitizer.sanitize === 'function') ? sanitizer.sanitize(dirty, MD_SANITIZE) : dirty;
           const postDoc = new DOMParser().parseFromString(clean, 'text/html');
 
           // Restrict <use> tags to only in-document fragments for security
@@ -802,5 +839,28 @@ const styles = StyleSheet.create({
     inset: 0,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  imageNativeContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 24,
+  },
+  imageScrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  nativeImage: {
+    width: '100%',
+    height: '100%',
+    minWidth: 320,
+    minHeight: 320,
+  },
+  imageInfoBar: {
+    fontSize: 13,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    textAlign: 'center',
   },
 });
