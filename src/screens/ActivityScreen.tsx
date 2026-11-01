@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, SafeAreaView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowUpDown, CheckCircle, Clock, AlertTriangle } from 'lucide-react-native';
 import { TransferJob, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
@@ -33,10 +34,10 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ settings }) => {
   const theme = THEMES[settings.theme];
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safeArea, { backgroundColor: theme.bg }]}>
       <View style={styles.container}>
         <View style={styles.topBar}>
-          <Text style={[styles.title, { color: theme.fg }]}>Activity</Text>
+          <Text style={[styles.title, { color: theme.fg || theme.text }]}>Activity</Text>
         </View>
 
         <ScrollView contentContainerStyle={styles.list}>
@@ -85,7 +86,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   topBar: { marginBottom: 16 },
   title: { fontSize: 24, fontWeight: '800' },
-  list: { paddingBottom: 40 },
+  list: { paddingBottom: 100 },
   jobCard: {
     flexDirection: 'row',
     alignItems: 'center',

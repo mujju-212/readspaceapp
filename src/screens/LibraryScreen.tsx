@@ -6,11 +6,11 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  SafeAreaView,
   Alert,
   ActivityIndicator,
   FlatList,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Search,
   FolderPlus,
@@ -362,12 +362,12 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
   }, [savedLinks, search]);
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safeArea, { backgroundColor: theme.bg }]}>
       <View style={styles.container}>
         {/* Top Header */}
         <View style={styles.topBar}>
           <Text style={[styles.title, { color: theme.text }]}>Library</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={styles.topActionsRow}>
             {tab === 'local' && (
               <View style={{ flexDirection: 'row', gap: 6 }}>
                 <TouchableOpacity
@@ -375,14 +375,14 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                   onPress={handlePickFile}
                 >
                   <FileText size={14} color="#8b5cf6" />
-                  <Text style={[styles.actionBtnText, { color: '#8b5cf6' }]}>Open File</Text>
+                  <Text style={[styles.actionBtnText, { color: '#8b5cf6' }]}>File</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.actionBtn, { backgroundColor: theme.primary + '18', borderColor: theme.primary + '40' }]}
                   onPress={handlePickFolder}
                 >
                   <FolderOpen size={14} color={theme.primary} />
-                  <Text style={[styles.actionBtnText, { color: theme.primary }]}>Open Folder</Text>
+                  <Text style={[styles.actionBtnText, { color: theme.primary }]}>Folder</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.actionBtn, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b40' }]}
@@ -426,7 +426,10 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
             onPress={() => setTab('local')}
           >
             <HardDrive size={14} color={tab === 'local' ? '#ffffff' : theme.textSecondary} />
-            <Text style={[styles.segmentText, { color: tab === 'local' ? '#ffffff' : theme.textSecondary }]}>
+            <Text
+              style={[styles.segmentText, { color: tab === 'local' ? '#ffffff' : theme.textSecondary }]}
+              numberOfLines={1}
+            >
               On Device
             </Text>
           </TouchableOpacity>
@@ -436,8 +439,11 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
             onPress={() => setTab('saved')}
           >
             <Bookmark size={14} color={tab === 'saved' ? '#ffffff' : theme.textSecondary} />
-            <Text style={[styles.segmentText, { color: tab === 'saved' ? '#ffffff' : theme.textSecondary }]}>
-              Saved Links ({savedLinks.length})
+            <Text
+              style={[styles.segmentText, { color: tab === 'saved' ? '#ffffff' : theme.textSecondary }]}
+              numberOfLines={1}
+            >
+              {savedLinks.length > 0 ? `Saved (${savedLinks.length})` : 'Saved'}
             </Text>
           </TouchableOpacity>
 
@@ -446,8 +452,11 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
             onPress={() => setTab('drive')}
           >
             <Cloud size={14} color={tab === 'drive' ? '#ffffff' : theme.textSecondary} />
-            <Text style={[styles.segmentText, { color: tab === 'drive' ? '#ffffff' : theme.textSecondary }]}>
-              Google Drive
+            <Text
+              style={[styles.segmentText, { color: tab === 'drive' ? '#ffffff' : theme.textSecondary }]}
+              numberOfLines={1}
+            >
+              Drive
             </Text>
           </TouchableOpacity>
         </View>
@@ -816,6 +825,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 14,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  topActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   title: { fontSize: 24, fontWeight: '800' },
   actionBtn: {
@@ -892,7 +908,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   chipText: { fontSize: 11.5, fontWeight: '600' },
-  listContainer: { paddingBottom: 30 },
+  listContainer: { paddingBottom: 100 },
   fileCard: {
     flexDirection: 'row',
     alignItems: 'center',

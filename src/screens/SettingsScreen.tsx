@@ -4,12 +4,12 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   TouchableOpacity,
   TextInput,
   Switch,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Palette,
   Globe,
@@ -64,14 +64,25 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
     if (!info.isAvailable && !info.error) {
       Alert.alert('App Up to Date', `ReadSpace v${info.currentVersion} is currently the latest version.`);
     } else if (info.isAvailable) {
-      Alert.alert(
-        'Update Available',
-        `Version ${info.latestVersion} is available. Would you like to view and download it?`,
-        [
-          { text: 'Later', style: 'cancel' },
-          { text: 'Download', onPress: () => UpdateService.openUpdateUrl(info.downloadUrl) },
-        ]
-      );
+      if (info.isOta) {
+        Alert.alert(
+          'Update Ready',
+          'A new update has been downloaded from Expo. Would you like to restart the app to apply it now?',
+          [
+            { text: 'Later', style: 'cancel' },
+            { text: 'Restart Now', onPress: () => UpdateService.reloadApp() },
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Update Available',
+          `Version ${info.latestVersion} is available. Would you like to view and download it?`,
+          [
+            { text: 'Later', style: 'cancel' },
+            { text: 'Download', onPress: () => UpdateService.openUpdateUrl(info.downloadUrl) },
+          ]
+        );
+      }
     } else if (info.error) {
       Alert.alert('Check Updates', info.error);
     }
@@ -156,7 +167,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
   ];
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safeArea, { backgroundColor: theme.bg }]}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={[styles.screenTitle, { color: theme.fg }]}>Settings</Text>
 
@@ -467,7 +478,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   safeArea: { flex: 1 },
-  container: { padding: 16, paddingBottom: 40 },
+  container: { padding: 16, paddingBottom: 110 },
   screenTitle: {
     fontSize: 22,
     fontWeight: '800',

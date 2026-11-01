@@ -4,11 +4,11 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   Modal,
   useWindowDimensions,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, SlidersHorizontal, Bookmark as BookmarkIcon, PanelLeft, Folder, Maximize2 } from 'lucide-react-native';
 import { HybridReader } from '../components/HybridReader';
 import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
@@ -135,7 +135,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: isZenMode ? theme.bg : theme.panel }]}>
+    <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={[styles.safeArea, { backgroundColor: isZenMode ? theme.bg : theme.panel }]}>
       {/* Zen Mode Floating Exit Pill */}
       {isZenMode ? (
         <TouchableOpacity
@@ -405,7 +405,7 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 6, marginRight: 2 },
   sidebarToggleBtn: { padding: 6, marginRight: 8 },
-  titleArea: { flex: 1 },
+  titleArea: { flex: 1, minWidth: 0, marginRight: 8 },
   docTitle: { fontSize: 14, fontWeight: '700' },
   badgeRow: { flexDirection: 'row', gap: 6, marginTop: 2 },
   badge: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 },

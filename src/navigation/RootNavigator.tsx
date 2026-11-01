@@ -1,6 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Home, BookOpen, ArrowUpDown, Settings as SettingsIcon } from 'lucide-react-native';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
@@ -25,6 +26,8 @@ interface RootNavigatorProps {
 
 const MainTabsNavigator: React.FC<RootNavigatorProps> = ({ settings, onUpdateSettings }) => {
   const theme = THEMES[settings.theme];
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, 6);
 
   return (
     <Tab.Navigator
@@ -33,9 +36,9 @@ const MainTabsNavigator: React.FC<RootNavigatorProps> = ({ settings, onUpdateSet
         tabBarStyle: {
           backgroundColor: theme.card,
           borderTopColor: theme.border,
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 8,
+          height: 56 + bottomInset,
+          paddingBottom: bottomInset,
+          paddingTop: 6,
         },
         tabBarActiveTintColor: theme.primary,
         tabBarInactiveTintColor: theme.muted,

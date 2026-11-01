@@ -1,7 +1,9 @@
 import { Platform, Linking } from 'react-native';
+import * as Updates from 'expo-updates';
 
 export interface AppUpdateInfo {
   isAvailable: boolean;
+  isOta?: boolean;
   currentVersion: string;
   latestVersion?: string;
   releaseName?: string;
@@ -19,9 +21,37 @@ export const UpdateService = {
     return CURRENT_APP_VERSION;
   },
 
+  async reloadApp(): Promise<void> {
+    try {
+      await Updates.reloadAsync();
+    } catch (e) {
+      console.warn('Could not reload app:', e);
+    }
+  },
+
   async checkForUpdates(): Promise<AppUpdateInfo> {
     try {
-      // 1. Check GitHub Releases for the latest APK / package release
+      // 1. Check Expo Over-The-Air (EAS Update) first
+      if (!__DEV__ && Updates.isEnabled) {
+        try {
+          const update = await Updates.checkForUpdateAsync();
+          if (update.isAvailable) {
+            await Updates.fetchUpdateAsync();
+            return {
+              isAvailable: true,
+              isOta: true,
+              currentVersion: CURRENT_APP_VERSION,
+              latestVersion: 'OTA Update',
+              releaseName: 'Expo Over-The-Air Update',
+              releaseNotes: 'A fresh update is ready to apply immediately without reinstalling.',
+            };
+          }
+        } catch (otaErr: any) {
+          console.warn('Expo OTA update check error:', otaErr);
+        }
+      }
+
+      // 2. Check GitHub Releases for the latest APK / package release
       const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
         headers: {
           'Accept': 'application/vnd.github.v3+json',

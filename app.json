@@ -49,6 +49,12 @@
       "expo-document-picker",
       "expo-file-system"
     ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b0cbaa86-1437-43fa-b961-72346d135b9a"
+    },
     "extra": {
       "eas": {
         "projectId": "b0cbaa86-1437-43fa-b961-72346d135b9a"

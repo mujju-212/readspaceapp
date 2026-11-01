@@ -6,10 +6,10 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
-  SafeAreaView,
   Alert,
   TextInput,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   FileText,
   FolderOpen,
@@ -213,7 +213,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
     : docs;
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.bg }]}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safeArea, { backgroundColor: theme.bg }]}>
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
@@ -226,9 +226,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
             <View style={[styles.logoBadge, { backgroundColor: theme.primary }]}>
               <FileText size={18} color="#ffffff" />
             </View>
-            <View>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[styles.brandTitle, { color: theme.text }]}>ReadSpace</Text>
-              <Text style={[styles.brandTagline, { color: theme.textMuted }]}>
+              <Text style={[styles.brandTagline, { color: theme.textMuted }]} numberOfLines={1}>
                 {user ? `Signed in as ${user.displayName || user.email}` : 'One calm workspace for all your docs'}
               </Text>
             </View>
@@ -354,6 +354,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
             <Text style={[styles.qaTitle, { color: theme.text }]}>Open Link</Text>
             <Text style={[styles.qaDesc, { color: theme.textMuted }]}>
               Paste a shared Drive URL or Doc
+            </Text>
+          </TouchableOpacity>
+
+          {/* 6. Cloud Transfer */}
+          <TouchableOpacity
+            style={[styles.qaCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            onPress={() => setShowCloudTransferModal(true)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.qaIconWrap, { backgroundColor: '#06b6d418' }]}>
+              <Cloud size={20} color="#06b6d4" />
+            </View>
+            <Text style={[styles.qaTitle, { color: theme.text }]}>Cloud Transfer</Text>
+            <Text style={[styles.qaDesc, { color: theme.textMuted }]}>
+              Sync workspace or backup to cloud
             </Text>
           </TouchableOpacity>
         </View>
@@ -679,7 +694,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 90,
   },
   header: {
     flexDirection: 'row',
@@ -688,9 +703,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   brandContainer: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    marginRight: 8,
   },
   logoBadge: {
     width: 38,
@@ -708,8 +725,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   userChip: {
+    flexShrink: 0,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1,
   },
@@ -773,11 +791,12 @@ const styles = StyleSheet.create({
   qaGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    justifyContent: 'space-between',
+    rowGap: 10,
     marginBottom: 22,
   },
   qaCard: {
-    width: '48%',
+    width: '48.5%',
     padding: 14,
     borderRadius: 12,
     borderWidth: 1,
