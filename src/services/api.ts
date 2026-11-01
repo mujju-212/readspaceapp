@@ -258,7 +258,7 @@ export const Api = {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       returnTo = window.location.origin;
     } else {
-      returnTo = 'readspace://auth';
+      returnTo = 'com.readspace.app://auth';
     }
     return `${base}/api/auth/google/start?drive=${withDrive ? '1' : '0'}&returnTo=${encodeURIComponent(returnTo)}`;
   },

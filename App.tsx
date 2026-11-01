@@ -36,12 +36,13 @@ export default function App() {
       }
     }
 
-    // Listen for incoming deep link URLs (e.g. readspace://auth?signedin=1&token=... or exp://...)
+    // Listen for incoming deep link URLs (e.g. com.readspace.app://auth?signedin=1&token=... or readspace://)
     const handleDeepLink = async (eventOrUrl: { url: string } | string | null) => {
       const url = typeof eventOrUrl === 'string' ? eventOrUrl : eventOrUrl?.url;
       if (!url) return;
       try {
         if (
+          url.startsWith('com.readspace.app://') ||
           url.startsWith('readspace://') ||
           url.startsWith('exp://') ||
           url.includes('signedin=1') ||

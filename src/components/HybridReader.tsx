@@ -1,5 +1,16 @@
-import React, { useRef, useEffect } from 'react';
-import { View, StyleSheet, ActivityIndicator, Platform, Image, Text, ScrollView } from 'react-native';
+import React, { useRef, useEffect, useState } from 'react';
+import {
+  View,
+  StyleSheet,
+  ActivityIndicator,
+  Platform,
+  Image,
+  Text,
+  ScrollView,
+  Animated,
+  PanResponder,
+  TouchableOpacity,
+} from 'react-native';
 import { MobileDoc, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
 import {
@@ -25,37 +36,160 @@ interface HybridReaderProps {
   onPositionChange?: (position: { page?: number; scroll?: number; zoom?: number; time?: number }) => void;
 }
 
+const NativeImageViewer: React.FC<{
+  imageUri: string;
+  name: string;
+  themeColors: any;
+}> = ({ imageUri, name, themeColors }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+  const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const [scaleDisplay, setScaleDisplay] = useState(1);
+
+  const scaleNum = useRef(1);
+  const panOffset = useRef({ x: 0, y: 0 });
+  const lastTouchTime = useRef(0);
+  const initialDistance = useRef(0);
+  const baseScaleOnPinch = useRef(1);
+
+  const animateTo = (newScale: number, newX = 0, newY = 0) => {
+    const clampedScale = Math.min(6, Math.max(0.6, newScale));
+    scaleNum.current = clampedScale;
+    setScaleDisplay(clampedScale);
+    panOffset.current = { x: newX, y: newY };
+
+    Animated.parallel([
+      Animated.spring(scale, {
+        toValue: clampedScale,
+        useNativeDriver: true,
+        friction: 7,
+      }),
+      Animated.spring(pan, {
+        toValue: { x: newX, y: newY },
+        useNativeDriver: true,
+        friction: 7,
+      }),
+    ]).start();
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+
+      onPanResponderGrant: (evt) => {
+        if (evt.nativeEvent.touches.length === 2) {
+          const [t0, t1] = evt.nativeEvent.touches;
+          initialDistance.current = Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY);
+          baseScaleOnPinch.current = scaleNum.current;
+        } else if (evt.nativeEvent.touches.length === 1) {
+          const now = Date.now();
+          if (now - lastTouchTime.current < 300) {
+            // Double tap detected!
+            if (scaleNum.current > 1.2) {
+              animateTo(1, 0, 0);
+            } else {
+              animateTo(2.5, 0, 0);
+            }
+          }
+          lastTouchTime.current = now;
+        }
+      },
+
+      onPanResponderMove: (evt, gestureState) => {
+        if (evt.nativeEvent.touches.length === 2) {
+          // Pinch to zoom
+          const [t0, t1] = evt.nativeEvent.touches;
+          const currentDistance = Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY);
+          if (initialDistance.current > 0) {
+            const ratio = currentDistance / initialDistance.current;
+            const newScale = Math.min(6, Math.max(0.6, baseScaleOnPinch.current * ratio));
+            scale.setValue(newScale);
+            scaleNum.current = newScale;
+            setScaleDisplay(newScale);
+          }
+        } else if (evt.nativeEvent.touches.length === 1 && scaleNum.current > 1) {
+          // Pan when zoomed in
+          const newX = panOffset.current.x + gestureState.dx;
+          const newY = panOffset.current.y + gestureState.dy;
+          pan.setValue({ x: newX, y: newY });
+        }
+      },
+
+      onPanResponderRelease: (evt, gestureState) => {
+        if (scaleNum.current > 1) {
+          panOffset.current.x += gestureState.dx;
+          panOffset.current.y += gestureState.dy;
+        } else {
+          animateTo(1, 0, 0);
+        }
+      },
+    })
+  ).current;
+
+  const zoomIn = () => animateTo(scaleNum.current * 1.3, panOffset.current.x, panOffset.current.y);
+  const zoomOut = () => animateTo(scaleNum.current * 0.77, panOffset.current.x, panOffset.current.y);
+  const resetZoom = () => animateTo(1, 0, 0);
+  const fitWidth = () => animateTo(2.3, 0, 0);
+
+  return (
+    <View style={[styles.container, styles.imageNativeContainer, { backgroundColor: themeColors.bg }]}>
+      <View style={styles.imageGestureArea} {...panResponder.panHandlers}>
+        <Animated.Image
+          source={{ uri: imageUri }}
+          style={[
+            styles.nativeImage,
+            {
+              transform: [
+                { translateX: pan.x },
+                { translateY: pan.y },
+                { scale },
+              ],
+            },
+          ]}
+          resizeMode="contain"
+        />
+      </View>
+
+      {/* Floating Zoom & Fit Toolbar */}
+      <View style={[styles.imageToolbar, { backgroundColor: 'rgba(15, 23, 42, 0.90)', borderColor: themeColors.border }]}>
+        <TouchableOpacity style={styles.toolbarBtn} onPress={zoomOut} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={styles.toolbarBtnText}>−</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.scaleBadge} onPress={resetZoom}>
+          <Text style={styles.scaleBadgeText}>{Math.round(scaleDisplay * 100)}%</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.toolbarBtn} onPress={zoomIn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={styles.toolbarBtnText}>+</Text>
+        </TouchableOpacity>
+
+        <View style={styles.toolbarDivider} />
+
+        <TouchableOpacity style={styles.fitBtn} onPress={fitWidth}>
+          <Text style={styles.fitBtnText}>Fit Width</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.fitBtn} onPress={resetZoom}>
+          <Text style={[styles.fitBtnText, { color: '#94a3b8' }]}>Reset</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
 export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPositionChange }) => {
   const webViewRef = useRef<any>(null);
   const iframeRef = useRef<any>(null);
   const themeColors = THEMES[settings.theme];
 
-  // 1. High-Performance Native Image Engine on Mobile
+  // 1. High-Performance Native Image Engine with Touch Gestures on Mobile
   if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {
     const imageUri = doc.base64Data
       ? (doc.base64Data.startsWith('data:') ? doc.base64Data : `data:${doc.mime || 'image/jpeg'};base64,${doc.base64Data}`)
       : doc.uri;
 
-    return (
-      <View style={[styles.container, styles.imageNativeContainer, { backgroundColor: themeColors.bg }]}>
-        <ScrollView
-          contentContainerStyle={styles.imageScrollContent}
-          maximumZoomScale={3}
-          minimumZoomScale={1}
-          showsHorizontalScrollIndicator={false}
-          showsVerticalScrollIndicator={false}
-        >
-          <Image
-            source={{ uri: imageUri }}
-            style={styles.nativeImage}
-            resizeMode="contain"
-          />
-        </ScrollView>
-        <Text style={[styles.imageInfoBar, { color: themeColors.muted }]} numberOfLines={1}>
-          {doc.name}
-        </Text>
-      </View>
-    );
+    return <NativeImageViewer imageUri={imageUri || ''} name={doc.name} themeColors={themeColors} />;
   }
 
   // Listen for window message on Web
@@ -843,24 +977,73 @@ const styles = StyleSheet.create({
   imageNativeContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingBottom: 24,
+    position: 'relative',
+    overflow: 'hidden',
   },
-  imageScrollContent: {
-    flexGrow: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-  },
-  nativeImage: {
+  imageGestureArea: {
+    flex: 1,
     width: '100%',
     height: '100%',
-    minWidth: 320,
-    minHeight: 320,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  imageInfoBar: {
+  nativeImage: {
+    width: '94%',
+    height: '88%',
+  },
+  imageToolbar: {
+    position: 'absolute',
+    bottom: 24,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 24,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  toolbarBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toolbarBtnText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+  scaleBadge: {
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scaleBadgeText: {
+    color: '#ffffff',
     fontSize: 13,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    textAlign: 'center',
+    fontWeight: '700',
+  },
+  toolbarDivider: {
+    width: 1,
+    height: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    marginHorizontal: 8,
+  },
+  fitBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  fitBtnText: {
+    color: '#60a5fa',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

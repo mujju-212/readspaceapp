@@ -7,12 +7,25 @@ import {
   Modal,
   useWindowDimensions,
   Platform,
+  ScrollView,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, SlidersHorizontal, Bookmark as BookmarkIcon, PanelLeft, Folder, Maximize2 } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  SlidersHorizontal,
+  Bookmark as BookmarkIcon,
+  PanelLeft,
+  Folder,
+  Maximize2,
+  Plus,
+  X,
+  FileText,
+} from 'lucide-react-native';
 import { HybridReader } from '../components/HybridReader';
 import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
 import { Storage } from '../services/storage';
+import { pickDocuments } from '../services/picker';
 import { MobileDoc, ReaderSettings, WorkspaceFolder } from '../types';
 import { THEMES, ThemeName } from '../theme/colors';
 
@@ -31,6 +44,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
 }) => {
   const initialDoc: MobileDoc = route.params?.doc;
   const [currentDoc, setCurrentDoc] = useState<MobileDoc>(initialDoc);
+  const [openTabs, setOpenTabs] = useState<MobileDoc[]>(initialDoc ? [initialDoc] : []);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceFolder | null>(route.params?.workspace || null);
   const { width: windowWidth } = useWindowDimensions();
   const isDesktop = windowWidth >= 768;
@@ -42,6 +56,62 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
   const [isZenMode, setIsZenMode] = useState(Boolean(settings.zen));
   const [savedSidebarState, setSavedSidebarState] = useState(sidebarOpen);
   const theme = THEMES[settings.theme];
+
+  // Preload recent documents to populate the tab switcher bar
+  useEffect(() => {
+    Storage.getDocs().then((recentList) => {
+      if (recentList && recentList.length > 0) {
+        setOpenTabs((prev) => {
+          const map = new Map<string, MobileDoc>();
+          if (currentDoc) map.set(currentDoc.id, currentDoc);
+          for (const d of prev) map.set(d.id, d);
+          for (const d of recentList.slice(0, 8)) {
+            if (!map.has(d.id)) map.set(d.id, d);
+          }
+          return Array.from(map.values());
+        });
+      }
+    });
+  }, []);
+
+  const handleSelectTab = (tabDoc: MobileDoc) => {
+    if (tabDoc.id === currentDoc?.id) return;
+    setCurrentDoc(tabDoc);
+    void Storage.saveDoc(tabDoc);
+  };
+
+  const handleCloseTab = (e: any, tabId: string) => {
+    if (e && e.stopPropagation) e.stopPropagation();
+    setOpenTabs((prev) => {
+      const remaining = prev.filter((d) => d.id !== tabId);
+      if (tabId === currentDoc?.id) {
+        if (remaining.length > 0) {
+          setCurrentDoc(remaining[0]);
+        } else {
+          navigation.goBack();
+        }
+      }
+      return remaining;
+    });
+  };
+
+  const handleOpenNewFile = async () => {
+    try {
+      const picked = await pickDocuments();
+      if (picked && picked.length > 0) {
+        const newDoc = picked[0];
+        await Storage.saveDoc(newDoc);
+        setOpenTabs((prev) => {
+          const existing = prev.find((t) => t.id === newDoc.id);
+          if (existing) return prev;
+          return [newDoc, ...prev];
+        });
+        setCurrentDoc(newDoc);
+      }
+    } catch (err: any) {
+      console.warn('Could not pick new file:', err);
+    }
+  };
 
   // Sync zen setting if changed externally
   useEffect(() => {
@@ -225,6 +295,66 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
               <SlidersHorizontal size={18} color={theme.fg} />
             </TouchableOpacity>
           </View>
+        </View>
+      )}
+
+      {/* File Switcher Tab Bar (Like Web App TabBar) */}
+      {!isZenMode && (
+        <View style={[styles.tabBarContainer, { backgroundColor: theme.panel, borderBottomColor: theme.border }]}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabScrollContent}
+          >
+            {openTabs.map((tab) => {
+              const active = tab.id === currentDoc?.id;
+              return (
+                <TouchableOpacity
+                  key={tab.id}
+                  style={[
+                    styles.tabItem,
+                    {
+                      backgroundColor: active ? theme.sel : 'transparent',
+                      borderColor: active ? theme.accent : theme.border,
+                    },
+                  ]}
+                  onPress={() => handleSelectTab(tab)}
+                  activeOpacity={0.7}
+                >
+                  <FileText size={12} color={active ? theme.accent : theme.muted} style={{ marginRight: 6 }} />
+                  <Text
+                    style={[
+                      styles.tabTitle,
+                      { color: active ? theme.accent : theme.fg, fontWeight: active ? '700' : '500' },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {tab.name}
+                  </Text>
+                  {openTabs.length > 1 && (
+                    <TouchableOpacity
+                      style={styles.tabCloseBtn}
+                      onPress={(e) => handleCloseTab(e, tab.id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <X size={12} color={active ? theme.accent : theme.muted} />
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Load New File Button */}
+            <TouchableOpacity
+              style={[styles.newTabBtn, { backgroundColor: theme.sel, borderColor: theme.border }]}
+              onPress={handleOpenNewFile}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Open new file"
+            >
+              <Plus size={14} color={theme.accent} />
+              <Text style={[styles.newTabText, { color: theme.accent }]}>+ File</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       )}
 
@@ -522,5 +652,46 @@ const styles = StyleSheet.create({
   zenStatusBadgeText: {
     fontSize: 10,
     fontWeight: '800',
+  },
+  tabBarContainer: {
+    borderBottomWidth: 1,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  tabScrollContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  tabItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    maxWidth: 160,
+  },
+  tabTitle: {
+    fontSize: 12,
+    marginRight: 4,
+  },
+  tabCloseBtn: {
+    padding: 2,
+    marginLeft: 2,
+    borderRadius: 4,
+  },
+  newTabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 4,
+  },
+  newTabText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
