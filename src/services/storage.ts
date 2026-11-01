@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   contentWidth: 840,
   keepAwake: true,
   backgroundAudio: true,
+  zen: false,
 };
 
 export const Storage = {

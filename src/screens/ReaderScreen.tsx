@@ -7,8 +7,9 @@ import {
   SafeAreaView,
   Modal,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
-import { ArrowLeft, SlidersHorizontal, Bookmark as BookmarkIcon, PanelLeft, Folder } from 'lucide-react-native';
+import { ArrowLeft, SlidersHorizontal, Bookmark as BookmarkIcon, PanelLeft, Folder, Maximize2 } from 'lucide-react-native';
 import { HybridReader } from '../components/HybridReader';
 import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
 import { Storage } from '../services/storage';
@@ -38,7 +39,32 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
   );
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const [isZenMode, setIsZenMode] = useState(Boolean(settings.zen));
+  const [savedSidebarState, setSavedSidebarState] = useState(sidebarOpen);
   const theme = THEMES[settings.theme];
+
+  // Sync zen setting if changed externally
+  useEffect(() => {
+    if (settings.zen !== undefined && settings.zen !== isZenMode) {
+      setIsZenMode(settings.zen);
+      if (settings.zen) {
+        setSidebarOpen(false);
+      }
+    }
+  }, [settings.zen]);
+
+  const toggleZenMode = () => {
+    if (!isZenMode) {
+      setSavedSidebarState(sidebarOpen);
+      setSidebarOpen(false);
+      setIsZenMode(true);
+      onUpdateSettings({ zen: true });
+    } else {
+      setIsZenMode(false);
+      setSidebarOpen(savedSidebarState);
+      onUpdateSettings({ zen: false });
+    }
+  };
 
   // Sync if doc param changes
   useEffect(() => {
@@ -109,80 +135,103 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.panel }]}>
-      {/* Top Mobile App Bar */}
-      <View style={[styles.topBar, { backgroundColor: theme.panel, borderBottomColor: theme.border }]}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: isZenMode ? theme.bg : theme.panel }]}>
+      {/* Zen Mode Floating Exit Pill */}
+      {isZenMode ? (
         <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={[styles.zenExitBtn, { backgroundColor: theme.panel, borderColor: theme.border }]}
+          onPress={toggleZenMode}
+          activeOpacity={0.75}
+          accessibilityLabel="Exit zen mode"
         >
-          <ArrowLeft size={20} color={theme.fg} />
+          <Text style={[styles.zenExitText, { color: theme.muted }]}>✕ Exit zen</Text>
         </TouchableOpacity>
+      ) : (
+        /* Top Mobile App Bar */
+        <View style={[styles.topBar, { backgroundColor: theme.panel, borderBottomColor: theme.border }]}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <ArrowLeft size={20} color={theme.fg} />
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[
-            styles.sidebarToggleBtn,
-            sidebarOpen && { backgroundColor: theme.sel, borderRadius: 6 },
-          ]}
-          onPress={() => setSidebarOpen((prev: boolean) => !prev)}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          accessibilityLabel={sidebarOpen ? 'Hide file tree' : 'Show file tree'}
-        >
-          <PanelLeft size={19} color={sidebarOpen ? theme.accent : theme.fg} />
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.sidebarToggleBtn,
+              sidebarOpen && { backgroundColor: theme.sel, borderRadius: 6 },
+            ]}
+            onPress={() => setSidebarOpen((prev: boolean) => !prev)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel={sidebarOpen ? 'Hide file tree' : 'Show file tree'}
+          >
+            <PanelLeft size={19} color={sidebarOpen ? theme.accent : theme.fg} />
+          </TouchableOpacity>
 
-        <View style={styles.titleArea}>
-          <Text style={[styles.docTitle, { color: theme.fg }]} numberOfLines={1}>
-            {currentDoc?.name || 'Document'}
-          </Text>
-          <View style={styles.badgeRow}>
-            {currentDoc?.kind && (
-              <View style={[styles.badge, { backgroundColor: theme.sel }]}>
-                <Text style={[styles.badgeText, { color: theme.accent }]}>
-                  {currentDoc.kind.toUpperCase()}
-                </Text>
-              </View>
-            )}
-            {currentDoc?.isDrive ? (
-              <View style={[styles.badge, { backgroundColor: theme.sel }]}>
-                <Text style={[styles.badgeText, { color: theme.accent }]}>DRIVE</Text>
-              </View>
-            ) : activeWorkspace ? (
-              <View style={[styles.badge, { backgroundColor: theme.sel }]}>
-                <Text style={[styles.badgeText, { color: theme.accent }]} numberOfLines={1}>
-                  {activeWorkspace.name}
-                </Text>
-              </View>
-            ) : null}
+          <View style={styles.titleArea}>
+            <Text style={[styles.docTitle, { color: theme.fg }]} numberOfLines={1}>
+              {currentDoc?.name || 'Document'}
+            </Text>
+            <View style={styles.badgeRow}>
+              {currentDoc?.kind && (
+                <View style={[styles.badge, { backgroundColor: theme.sel }]}>
+                  <Text style={[styles.badgeText, { color: theme.accent }]}>
+                    {currentDoc.kind.toUpperCase()}
+                  </Text>
+                </View>
+              )}
+              {currentDoc?.isDrive ? (
+                <View style={[styles.badge, { backgroundColor: theme.sel }]}>
+                  <Text style={[styles.badgeText, { color: theme.accent }]}>DRIVE</Text>
+                </View>
+              ) : activeWorkspace ? (
+                <View style={[styles.badge, { backgroundColor: theme.sel }]}>
+                  <Text style={[styles.badgeText, { color: theme.accent }]} numberOfLines={1}>
+                    {activeWorkspace.name}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+
+          <View style={styles.rightActions}>
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              onPress={toggleZenMode}
+              accessibilityLabel="Enter zen mode"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Maximize2 size={18} color={theme.fg} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              onPress={handleToggleBookmark}
+            >
+              <BookmarkIcon
+                size={18}
+                color={isBookmarked ? theme.accent : theme.muted}
+                fill={isBookmarked ? theme.accent : 'transparent'}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              onPress={() => setShowSettingsModal(true)}
+              accessibilityLabel="Reader settings"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <SlidersHorizontal size={18} color={theme.fg} />
+            </TouchableOpacity>
           </View>
         </View>
-
-        <View style={styles.rightActions}>
-          <TouchableOpacity
-            style={styles.actionIconBtn}
-            onPress={handleToggleBookmark}
-          >
-            <BookmarkIcon
-              size={18}
-              color={isBookmarked ? theme.accent : theme.muted}
-              fill={isBookmarked ? theme.accent : 'transparent'}
-            />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionIconBtn}
-            onPress={() => setShowSettingsModal(true)}
-          >
-            <SlidersHorizontal size={18} color={theme.fg} />
-          </TouchableOpacity>
-        </View>
-      </View>
+      )}
 
       {/* Main Workbench Body: Split on desktop/tablet, drawer on mobile */}
       {isDesktop ? (
         <View style={styles.workbenchRow}>
-          {sidebarOpen && (
+          {sidebarOpen && !isZenMode && (
             <View style={[styles.dockedSidebar, { backgroundColor: theme.panel, borderRightColor: theme.border }]}>
               <WorkspaceExplorerView
                 workspace={activeWorkspace}
@@ -305,6 +354,33 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
               </TouchableOpacity>
             </View>
 
+            {/* Zen Mode / Focus */}
+            <Text style={[styles.sheetLabel, { color: theme.muted }]}>FOCUS</Text>
+            <TouchableOpacity
+              style={[
+                styles.zenModeRow,
+                { backgroundColor: isZenMode ? theme.sel : theme.panel, borderColor: isZenMode ? theme.accent : theme.border },
+              ]}
+              onPress={() => {
+                toggleZenMode();
+                setShowSettingsModal(false);
+              }}
+              activeOpacity={0.8}
+            >
+              <Maximize2 size={18} color={isZenMode ? theme.accent : theme.fg} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={[styles.zenModeTitle, { color: theme.fg }]}>Zen Mode</Text>
+                <Text style={[styles.zenModeSubtitle, { color: theme.muted }]}>
+                  Distraction-free reading without toolbars
+                </Text>
+              </View>
+              <View style={[styles.zenStatusBadge, { backgroundColor: isZenMode ? theme.accent : theme.border }]}>
+                <Text style={[styles.zenStatusBadgeText, { color: isZenMode ? theme.accentFg : theme.muted }]}>
+                  {isZenMode ? 'ACTIVE' : 'OFF'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.closeModalBtn, { backgroundColor: theme.accent }]}
               onPress={() => setShowSettingsModal(false)}
@@ -401,4 +477,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   closeModalBtnText: { fontSize: 14, fontWeight: '700' },
+  zenExitBtn: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 52 : 14,
+    right: 14,
+    zIndex: 99,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  zenExitText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  zenModeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  zenModeTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  zenModeSubtitle: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  zenStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  zenStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
 });

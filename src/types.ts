@@ -90,6 +90,7 @@ export interface ReaderSettings {
   contentWidth: number; // percentage or px
   keepAwake: boolean;
   backgroundAudio: boolean;
+  zen?: boolean;
 }
 
 export interface TransferJob {

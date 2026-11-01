@@ -270,6 +270,8 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     }
     .reader-body table { width: 100%; border-collapse: collapse; margin: 1em 0; }
     .reader-body th, .reader-body td { border: 1px solid var(--border); padding: 6px 10px; }
+    .reader-body img { max-width: 100%; height: auto; border-radius: 6px; }
+    .reader-body svg { max-width: 100%; height: auto; }
     .loading-spinner {
       display: flex;
       flex-direction: column;
@@ -475,8 +477,56 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           root.innerHTML = '<div class="reader-body">' + DOMPurify.sanitize(res.value) + '</div>';
         } else if (docKind === 'markdown') {
           const rawText = decodeText(docBase64);
-          const html = marked.parse(rawText);
-          root.innerHTML = '<div class="reader-body">' + DOMPurify.sanitize(html) + '</div>';
+          let dirty = marked.parse(rawText || '');
+
+          // Rewrite <embed>/<object> SVG references to <img> so they render properly
+          const pre = new DOMParser().parseFromString(dirty, 'text/html');
+          const embeds = Array.from(pre.querySelectorAll('embed[src], object[data]'));
+          if (embeds.length) {
+            for (const el of embeds) {
+              const src = el.getAttribute('src') || el.getAttribute('data') || '';
+              const type = (el.getAttribute('type') || '').toLowerCase();
+              const looksSvg = type.includes('svg') || (!type && /\.svg($|[?#])/i.test(src));
+              if (!src || !looksSvg) continue;
+              const img = pre.createElement('img');
+              img.setAttribute('src', src);
+              img.setAttribute('alt', el.getAttribute('aria-label') || el.getAttribute('title') || 'svg diagram');
+              el.replaceWith(img);
+            }
+            dirty = pre.body.innerHTML;
+          }
+
+          // Sanitizer config that keeps inline SVG renderable (draw.io/Excalidraw, foreignObject, use)
+          const MD_SANITIZE = {
+            ADD_TAGS: ['use', 'foreignObject'],
+            ADD_ATTR: ['target', 'id', 'xlink:href'],
+            HTML_INTEGRATION_POINTS: { 'annotation-xml': true, foreignobject: true, desc: true, title: true }
+          };
+          const clean = DOMPurify.sanitize(dirty, MD_SANITIZE);
+          const postDoc = new DOMParser().parseFromString(clean, 'text/html');
+
+          // Restrict <use> tags to only in-document fragments for security
+          postDoc.querySelectorAll('use').forEach(u => {
+            ['href', 'xlink:href'].forEach(attr => {
+              const val = u.getAttribute(attr);
+              if (val && !val.startsWith('#')) u.removeAttribute(attr);
+            });
+          });
+
+          // Scale inline SVG without explicit dimensions but with viewBox
+          postDoc.querySelectorAll('svg').forEach(s => {
+            if (!s.getAttribute('width') && !s.getAttribute('height') && s.getAttribute('viewBox')) {
+              s.setAttribute('width', '100%');
+            }
+          });
+
+          // Ensure links open in new tab
+          postDoc.querySelectorAll('a[href]').forEach(a => {
+            a.setAttribute('target', '_blank');
+            a.setAttribute('rel', 'noopener noreferrer');
+          });
+
+          root.innerHTML = '<div class="reader-body">' + postDoc.body.innerHTML + '</div>';
         } else {
           // Plain Text or Notes
           const rawText = decodeText(docBase64);
