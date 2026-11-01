@@ -2,6 +2,13 @@ import React, { useRef, useEffect } from 'react';
 import { View, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { MobileDoc, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
+import {
+  OFFLINE_MARKED_B64,
+  OFFLINE_DOMPURIFY_B64,
+  OFFLINE_JSZIP_B64,
+  OFFLINE_MAMMOTH_B64,
+  OFFLINE_PDFJS_B64,
+} from '../vendor/offlineVendors';
 
 let NativeWebView: any = null;
 if (Platform.OS !== 'web') {
@@ -78,6 +85,32 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
   <title>${doc.name}</title>
+  <!-- Offline-bundled document engines (Guaranteed zero-network execution) -->
+  <script>
+  (function() {
+    function loadBundle(b64) {
+      if (!b64) return;
+      try {
+        var code = decodeURIComponent(escape(atob(b64)));
+        var s = document.createElement('script');
+        s.textContent = code;
+        document.head.appendChild(s);
+      } catch(e) {
+        try {
+          var s2 = document.createElement('script');
+          s2.textContent = atob(b64);
+          document.head.appendChild(s2);
+        } catch(e2) {}
+      }
+    }
+    loadBundle(${JSON.stringify(OFFLINE_MARKED_B64)});
+    loadBundle(${JSON.stringify(OFFLINE_DOMPURIFY_B64)});
+    loadBundle(${JSON.stringify(OFFLINE_JSZIP_B64)});
+    loadBundle(${JSON.stringify(OFFLINE_MAMMOTH_B64)});
+    loadBundle(${JSON.stringify(OFFLINE_PDFJS_B64)});
+  })();
+  </script>
+  <!-- CDNs for fallback when online -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
@@ -421,9 +454,17 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           }
 
           if (typeof pdfjsLib !== 'undefined') {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            try {
+              if (navigator.onLine) {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+              } else {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+              }
+            } catch {
+              pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+            }
             const pdfData = base64ToUint8Array(docBase64);
-            const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+            const pdf = await pdfjsLib.getDocument({ data: pdfData, disableWorker: !navigator.onLine }).promise;
 
             for (let i = 1; i <= pdf.numPages; i++) {
               const page = await pdf.getPage(i);
@@ -696,6 +737,8 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           javaScriptEnabled={true}
           domStorageEnabled={true}
           allowFileAccess={true}
+          allowFileAccessFromFileURLs={true}
+          allowUniversalAccessFromFileURLs={true}
           scalesPageToFit={false}
           style={[styles.webview, { backgroundColor: themeColors.bg }]}
           renderLoading={() => (

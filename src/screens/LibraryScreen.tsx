@@ -42,7 +42,7 @@ import { Api } from '../services/api';
 import { MobileDoc, ReaderSettings, SavedLink, WorkspaceFolder } from '../types';
 import { THEMES } from '../theme/colors';
 import { OpenDriveLinkModal } from '../components/OpenDriveLinkModal';
-import { FolderExplorerModal } from '../components/FolderExplorerModal';
+import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
 
 interface LibraryScreenProps {
   navigation: any;
@@ -52,6 +52,7 @@ interface LibraryScreenProps {
 
 export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route, settings }) => {
   const [tab, setTab] = useState<'local' | 'saved' | 'drive'>(route.params?.initialTab || 'local');
+  const [viewMode, setViewMode] = useState<'tree' | 'recent'>('tree');
   const [docs, setDocs] = useState<MobileDoc[]>([]);
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceFolder[]>([]);
@@ -481,22 +482,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContainer}>
             {/* Active Workspace Banner */}
             {activeWorkspace && (
-              <TouchableOpacity
-                style={[styles.workspaceBanner, { backgroundColor: '#f59e0b12', borderColor: '#f59e0b35' }]}
-                onPress={async () => {
-                  const firstFile = findFirstFileEntry(activeWorkspace.entries || []);
-                  if (firstFile) {
-                    try {
-                      const doc = await openFolderEntry(firstFile);
-                      navigation.navigate('Reader', { doc, workspace: activeWorkspace, initialSidebarOpen: true });
-                      return;
-                    } catch (e) {
-                      console.warn('Could not open workspace first file:', e);
-                    }
-                  }
-                  setShowExplorerModal(true);
-                }}
-              >
+              <View style={[styles.workspaceBanner, { backgroundColor: '#f59e0b12', borderColor: '#f59e0b35', marginBottom: 10 }]}>
                 <View style={styles.workspaceBannerLeft}>
                   <FolderOpen size={20} color="#f59e0b" />
                   <View style={{ flex: 1 }}>
@@ -504,90 +490,163 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                       {activeWorkspace.name}
                     </Text>
                     <Text style={[styles.wsBannerSub, { color: theme.textMuted }]}>
-                      {activeWorkspace.fileCount || 'Multiple'} files · Tap to open Workbench
+                      {activeWorkspace.fileCount || 'Multiple'} files in workspace
                     </Text>
                   </View>
                 </View>
-                <Text style={[styles.wsBannerAction, { color: '#f59e0b' }]}>Open Workbench →</Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={async () => {
+                    const firstFile = findFirstFileEntry(activeWorkspace.entries || []);
+                    if (firstFile) {
+                      try {
+                        const doc = await openFolderEntry(firstFile);
+                        navigation.navigate('Reader', { doc, workspace: activeWorkspace, initialSidebarOpen: true });
+                        return;
+                      } catch (e) {
+                        console.warn('Could not open workspace first file:', e);
+                      }
+                    }
+                    setShowExplorerModal(true);
+                  }}
+                >
+                  <Text style={[styles.wsBannerAction, { color: '#f59e0b' }]}>Reader →</Text>
+                </TouchableOpacity>
+              </View>
             )}
 
-            {/* Filter Chips */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-              {['all', 'pdf', 'image', 'pptx', 'docx', 'audio', 'video', 'markdown', 'text'].map((k) => (
+            {/* Folder Tree vs Recent Files Toggle */}
+            {activeWorkspace && (
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
                 <TouchableOpacity
-                  key={k}
                   style={[
-                    styles.chip,
+                    styles.viewModeBtn,
                     {
-                      backgroundColor: filterKind === k ? theme.primary : theme.surface,
-                      borderColor: filterKind === k ? theme.primary : theme.border,
+                      backgroundColor: viewMode === 'tree' ? theme.primary : theme.surface,
+                      borderColor: viewMode === 'tree' ? theme.primary : theme.border,
                     },
                   ]}
-                  onPress={() => setFilterKind(k)}
+                  onPress={() => setViewMode('tree')}
                 >
-                  <Text style={[styles.chipText, { color: filterKind === k ? '#ffffff' : theme.textSecondary }]}>
-                    {k.toUpperCase()}
+                  <FolderOpen size={13} color={viewMode === 'tree' ? '#ffffff' : theme.textSecondary} />
+                  <Text style={[styles.viewModeText, { color: viewMode === 'tree' ? '#ffffff' : theme.textSecondary }]}>
+                    Folder Tree
                   </Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
 
-            {filteredLocalDocs.length === 0 ? (
-              <View style={[styles.emptyBox, { borderColor: theme.border }]}>
-                <HardDrive size={36} color={theme.textMuted} />
-                <Text style={[styles.emptyTitle, { color: theme.text }]}>No Local Files</Text>
-                <Text style={[styles.emptyDesc, { color: theme.textMuted }]}>
-                  Open a local directory or pick files from your device to read offline.
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                  <TouchableOpacity
-                    style={[styles.emptyBtn, { backgroundColor: '#f59e0b' }]}
-                    onPress={handlePickFolder}
-                  >
-                    <FolderOpen size={15} color="#ffffff" style={{ marginRight: 6 }} />
-                    <Text style={styles.emptyBtnText}>Open Folder</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.emptyBtn, { backgroundColor: theme.primary }]}
-                    onPress={handlePickFile}
-                  >
-                    <Plus size={15} color="#ffffff" style={{ marginRight: 6 }} />
-                    <Text style={styles.emptyBtnText}>Pick File</Text>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.viewModeBtn,
+                    {
+                      backgroundColor: viewMode === 'recent' ? theme.primary : theme.surface,
+                      borderColor: viewMode === 'recent' ? theme.primary : theme.border,
+                    },
+                  ]}
+                  onPress={() => setViewMode('recent')}
+                >
+                  <FileText size={13} color={viewMode === 'recent' ? '#ffffff' : theme.textSecondary} />
+                  <Text style={[styles.viewModeText, { color: viewMode === 'recent' ? '#ffffff' : theme.textSecondary }]}>
+                    Recent Files ({filteredLocalDocs.length})
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {viewMode === 'tree' && activeWorkspace ? (
+              <View style={{ minHeight: 480, height: 520, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.border, marginBottom: 20 }}>
+                <WorkspaceExplorerView
+                  workspace={activeWorkspace}
+                  theme={theme}
+                  onOpenDoc={(newDoc) => {
+                    void Storage.saveDoc(newDoc);
+                    navigation.navigate('Reader', { doc: newDoc, workspace: activeWorkspace, initialSidebarOpen: true });
+                  }}
+                  onWorkspaceChanged={(ws) => {
+                    setActiveWorkspace(ws);
+                    void Storage.saveWorkspace(ws);
+                  }}
+                  style={{ flex: 1 }}
+                />
               </View>
             ) : (
-              filteredLocalDocs.map((doc) => (
-                <View
-                  key={doc.id}
-                  style={[styles.fileCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
-                >
-                  <TouchableOpacity
-                    style={styles.cardMain}
-                    onPress={() => handleOpenDoc(doc)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.kindBadge, { backgroundColor: theme.primary + '18' }]}>
-                      <Text style={[styles.kindBadgeText, { color: theme.primary }]}>
-                        {doc.kind.slice(0, 4).toUpperCase()}
+              <>
+                {/* Filter Chips */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+                  {['all', 'pdf', 'image', 'pptx', 'docx', 'audio', 'video', 'markdown', 'text'].map((k) => (
+                    <TouchableOpacity
+                      key={k}
+                      style={[
+                        styles.chip,
+                        {
+                          backgroundColor: filterKind === k ? theme.primary : theme.surface,
+                          borderColor: filterKind === k ? theme.primary : theme.border,
+                        },
+                      ]}
+                      onPress={() => setFilterKind(k)}
+                    >
+                      <Text style={[styles.chipText, { color: filterKind === k ? '#ffffff' : theme.textSecondary }]}>
+                        {k.toUpperCase()}
                       </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                {filteredLocalDocs.length === 0 ? (
+                  <View style={[styles.emptyBox, { borderColor: theme.border }]}>
+                    <HardDrive size={36} color={theme.textMuted} />
+                    <Text style={[styles.emptyTitle, { color: theme.text }]}>No Local Files</Text>
+                    <Text style={[styles.emptyDesc, { color: theme.textMuted }]}>
+                      Open a local directory or pick files from your device to read offline.
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                      <TouchableOpacity
+                        style={[styles.emptyBtn, { backgroundColor: '#f59e0b' }]}
+                        onPress={handlePickFolder}
+                      >
+                        <FolderOpen size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                        <Text style={styles.emptyBtnText}>Open Folder</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.emptyBtn, { backgroundColor: theme.primary }]}
+                        onPress={handlePickFile}
+                      >
+                        <Plus size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                        <Text style={styles.emptyBtnText}>Pick File</Text>
+                      </TouchableOpacity>
                     </View>
-                    <View style={styles.cardInfo}>
-                      <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
-                        {doc.name}
-                      </Text>
-                      <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
-                        {doc.kind.toUpperCase()}
-                        {doc.size ? ` · ${(doc.size / 1024).toFixed(1)} KB` : ''}
-                      </Text>
+                  </View>
+                ) : (
+                  filteredLocalDocs.map((doc) => (
+                    <View
+                      key={doc.id}
+                      style={[styles.fileCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                    >
+                      <TouchableOpacity
+                        style={styles.cardMain}
+                        onPress={() => handleOpenDoc(doc)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.kindBadge, { backgroundColor: theme.primary + '18' }]}>
+                          <Text style={[styles.kindBadgeText, { color: theme.primary }]}>
+                            {doc.kind.slice(0, 4).toUpperCase()}
+                          </Text>
+                        </View>
+                        <View style={styles.cardInfo}>
+                          <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
+                            {doc.name}
+                          </Text>
+                          <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
+                            {doc.kind.toUpperCase()}
+                            {doc.size ? ` · ${(doc.size / 1024).toFixed(1)} KB` : ''}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(doc)}>
+                        <Trash2 size={16} color={theme.textMuted} />
+                      </TouchableOpacity>
                     </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(doc)}>
-                    <Trash2 size={16} color={theme.textMuted} />
-                  </TouchableOpacity>
-                </View>
-              ))
+                  ))
+                )}
+              </>
             )}
           </ScrollView>
         )}
@@ -1001,5 +1060,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 6,
+  },
+  viewModeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
+  },
+  viewModeText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

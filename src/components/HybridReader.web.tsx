@@ -2,6 +2,13 @@ import React, { useRef, useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { MobileDoc, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
+import {
+  OFFLINE_MARKED_B64,
+  OFFLINE_DOMPURIFY_B64,
+  OFFLINE_JSZIP_B64,
+  OFFLINE_MAMMOTH_B64,
+  OFFLINE_PDFJS_B64,
+} from '../vendor/offlineVendors';
 
 interface HybridReaderProps {
   doc: MobileDoc;
@@ -56,7 +63,32 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
   <title>${doc.name}</title>
-  <!-- CDNs for client-side document engines -->
+  <!-- Offline-bundled document engines (Guaranteed zero-network execution) -->
+  <script>
+  (function() {
+    function loadBundle(b64) {
+      if (!b64) return;
+      try {
+        var code = decodeURIComponent(escape(atob(b64)));
+        var s = document.createElement('script');
+        s.textContent = code;
+        document.head.appendChild(s);
+      } catch(e) {
+        try {
+          var s2 = document.createElement('script');
+          s2.textContent = atob(b64);
+          document.head.appendChild(s2);
+        } catch(e2) {}
+      }
+    }
+    loadBundle(${JSON.stringify(OFFLINE_MARKED_B64)});
+    loadBundle(${JSON.stringify(OFFLINE_DOMPURIFY_B64)});
+    loadBundle(${JSON.stringify(OFFLINE_JSZIP_B64)});
+    loadBundle(${JSON.stringify(OFFLINE_MAMMOTH_B64)});
+    loadBundle(${JSON.stringify(OFFLINE_PDFJS_B64)});
+  })();
+  </script>
+  <!-- CDNs for fallback when online -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
@@ -325,11 +357,19 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           }
 
           if (typeof pdfjsLib !== 'undefined') {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            try {
+              if (navigator.onLine) {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+              } else {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+              }
+            } catch {
+              pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+            }
             let pdf;
             if (docBase64) {
               const pdfData = base64ToUint8Array(docBase64);
-              pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+              pdf = await pdfjsLib.getDocument({ data: pdfData, disableWorker: !navigator.onLine }).promise;
             } else {
               pdf = await pdfjsLib.getDocument({ url: docUri }).promise;
             }
@@ -442,6 +482,34 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           root.innerHTML = '<div class="video-wrap">' +
             '<video src="' + videoUrl + '" controls playsinline autoplay></video>' +
             '</div>';
+        } else if (docKind === 'image') {
+          let imgSrc = '';
+          if (docBase64) {
+            if (docBase64.startsWith('data:image/')) {
+              imgSrc = docBase64;
+            } else {
+              let mimeType = 'image/png';
+              if (docName.match(/\\.jpe?g$/i)) mimeType = 'image/jpeg';
+              else if (docName.match(/\\.webp$/i)) mimeType = 'image/webp';
+              else if (docName.match(/\\.gif$/i)) mimeType = 'image/gif';
+              else if (docName.match(/\\.svg$/i)) mimeType = 'image/svg+xml';
+              else if (docName.match(/\\.bmp$/i)) mimeType = 'image/bmp';
+              else if (docName.match(/\\.ico$/i)) mimeType = 'image/x-icon';
+              imgSrc = 'data:' + mimeType + ';base64,' + docBase64;
+            }
+          } else if (docUri) {
+            imgSrc = docUri;
+          }
+
+          if (!imgSrc) {
+            root.innerHTML = '<div class="loading-spinner"><p>⚠️ No image data found</p></div>';
+            return;
+          }
+
+          root.innerHTML = '<div class="image-viewer-container" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:85vh;padding:20px;">' +
+            '<img src="' + imgSrc + '" alt="' + escapeHtml(docName) + '" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.15);" />' +
+            '<div style="margin-top:14px;font-size:12px;color:var(--muted);">' + escapeHtml(docName) + '</div>' +
+          '</div>';
         } else if (docKind === 'docx') {
           let buffer;
           if (docBase64) {

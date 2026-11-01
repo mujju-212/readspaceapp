@@ -40,6 +40,9 @@ export function getKindFromExt(name: string): DocKind {
     case 'svg':
     case 'bmp':
     case 'ico':
+    case 'avif':
+    case 'heic':
+    case 'tiff':
       return 'image';
     default:
       return 'text';
@@ -273,6 +276,17 @@ function pickWorkspaceFolderWeb(): Promise<WorkspaceFolder | null> {
   });
 }
 
+export function buildSafSubTreeUri(itemUri: string): string {
+  try {
+    const parts = itemUri.split('/document/');
+    if (parts.length > 1) {
+      const auth = parts[0].split('/tree/')[0];
+      return `${auth}/tree/${parts[1]}`;
+    }
+  } catch {}
+  return itemUri;
+}
+
 /**
  * Scan a directory URI safely on Android SAF (recursively loads subfolders and files)
  */
@@ -296,24 +310,43 @@ export async function scanDirectoryUri(
       let isDirectory = false;
       let children: FolderEntry[] | undefined = undefined;
 
-      // Detect if it is a directory by attempting readDirectoryAsync
+      // 1. Inspect using getInfoAsync when available
+      try {
+        const info = await FileSystem.getInfoAsync(itemUri);
+        if (info.exists && info.isDirectory) {
+          isDirectory = true;
+        }
+      } catch {
+        // Fallback heuristic: items with no file extension are typically folders
+        const dotIndex = name.lastIndexOf('.');
+        if (dotIndex <= 0 || name.length - dotIndex > 5) {
+          isDirectory = true;
+        }
+      }
+
+      const subTreeUri = buildSafSubTreeUri(itemUri);
+
+      // Attempt scanning children if directory candidate
       if (currentDepth < maxDepth) {
         try {
-          const subChildren = await scanDirectoryUri(itemUri, maxDepth, currentDepth + 1);
+          const subChildren = await StorageAccessFramework.readDirectoryAsync(subTreeUri);
           isDirectory = true;
-          children = subChildren;
+          // Recursively scan found subfolder
+          children = await scanDirectoryUri(subTreeUri, maxDepth, currentDepth + 1);
         } catch {
-          isDirectory = false;
+          try {
+            const subChildren = await StorageAccessFramework.readDirectoryAsync(itemUri);
+            isDirectory = true;
+            children = await scanDirectoryUri(itemUri, maxDepth, currentDepth + 1);
+          } catch {
+            // If read failed, keep as directory if info indicated it
+            if (isDirectory) {
+              children = [];
+            }
+          }
         }
-      } else {
-        // At max depth, test if it's a directory
-        try {
-          await StorageAccessFramework.readDirectoryAsync(itemUri);
-          isDirectory = true;
-          children = [];
-        } catch {
-          isDirectory = false;
-        }
+      } else if (isDirectory) {
+        children = [];
       }
 
       results.push({
@@ -416,7 +449,7 @@ export async function openFolderEntry(entry: FolderEntry): Promise<MobileDoc> {
     const ext = (entry.name || '').split('.').pop()?.toLowerCase() || '';
 
     let resolvedKind: MobileDoc['kind'] = 'text';
-    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(ext) || mime.startsWith('image/')) resolvedKind = 'image';
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico', 'avif', 'heic', 'tiff'].includes(ext) || mime.startsWith('image/')) resolvedKind = 'image';
     else if (ext === 'pdf' || mime.includes('pdf') || isGoogleDoc || isGoogleSlide) resolvedKind = 'pdf';
     else if (ext === 'docx' || mime.includes('wordprocessingml')) resolvedKind = 'docx';
     else if (ext === 'pptx' || mime.includes('presentationml')) resolvedKind = 'pptx';

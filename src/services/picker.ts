@@ -7,7 +7,13 @@ export function detectKind(fileName: string, mime?: string): DocKind {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
 
   if (ext === 'pdf' || mime?.includes('pdf')) return 'pdf';
-  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(ext) || mime?.includes('image')) return 'image';
+  if (
+    ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico', 'avif', 'heic', 'tiff'].includes(ext) ||
+    mime?.startsWith('image/') ||
+    mime?.includes('image')
+  ) {
+    return 'image';
+  }
   if (ext === 'docx' || ext === 'doc' || mime?.includes('word')) return 'docx';
   if (ext === 'pptx' || ext === 'ppt' || mime?.includes('presentation')) return 'pptx';
   if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || mime?.includes('audio')) return 'audio';
@@ -62,10 +68,14 @@ export async function pickDocuments(): Promise<MobileDoc[]> {
               reader.readAsDataURL(blob);
             });
           }
-        } else if (asset.size && asset.size < 25 * 1024 * 1024) {
-          base64Data = await FileSystem.readAsStringAsync(asset.uri, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
+        } else {
+          try {
+            base64Data = await FileSystem.readAsStringAsync(asset.uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+          } catch (readErr) {
+            console.warn('[picker] Failed to read base64 from uri:', asset.uri, readErr);
+          }
         }
       } catch {
         /* skip inline cache on read error */
