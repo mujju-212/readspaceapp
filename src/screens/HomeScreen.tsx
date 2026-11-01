@@ -8,6 +8,8 @@ import {
   RefreshControl,
   Alert,
   TextInput,
+  ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -65,6 +67,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
   const [showSavedLinksModal, setShowSavedLinksModal] = useState(false);
   const [showExplorerModal, setShowExplorerModal] = useState(false);
   const [showCloudTransferModal, setShowCloudTransferModal] = useState(false);
+  const [loadingOverlay, setLoadingOverlay] = useState(false);
+  const [loadingOverlayMsg, setLoadingOverlayMsg] = useState('Opening folder…');
 
   const theme = THEMES[settings.theme];
 
@@ -121,15 +125,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
 
   // Open Folder: picks a directory, loads workspace, finds first file, and opens Reader workbench
   const handleOpenFolder = async () => {
+    setLoadingOverlay(true);
+    setLoadingOverlayMsg('Opening directory…');
     try {
       const ws = await pickWorkspaceFolder();
       if (ws) {
+        setLoadingOverlayMsg(`Scanning ${ws.name}…`);
         setActiveWorkspace(ws);
         await loadData();
         const firstFile = findFirstFileEntry(ws.entries || []);
         if (firstFile) {
           try {
+            setLoadingOverlayMsg(`Opening ${firstFile.name}…`);
             const doc = await openFolderEntry(firstFile);
+            setLoadingOverlay(false);
             navigation.navigate('Reader', { doc, workspace: ws, initialSidebarOpen: true });
             return;
           } catch (err: any) {
@@ -140,6 +149,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
       }
     } catch (err: any) {
       Alert.alert('Folder Error', err?.message || 'Could not open folder.');
+    } finally {
+      setLoadingOverlay(false);
     }
   };
 
@@ -149,29 +160,42 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
       const picked = await pickDocuments();
       if (picked.length > 0) {
         const doc = picked[0];
+        setLoadingOverlay(true);
+        setLoadingOverlayMsg(`Opening ${doc.name}…`);
         await Storage.saveDoc(doc);
         await loadData();
+        setLoadingOverlay(false);
         navigation.navigate('Reader', { doc, workspace: activeWorkspace || undefined });
       }
     } catch (err: any) {
       Alert.alert('Picker Error', err?.message || 'Could not pick file.');
+    } finally {
+      setLoadingOverlay(false);
     }
   };
 
   // Open Workspace from Recent list: loads first file and opens Reader workbench
   const handleOpenWorkspace = async (ws: WorkspaceFolder) => {
-    setActiveWorkspace(ws);
-    const firstFile = findFirstFileEntry(ws.entries || []);
-    if (firstFile) {
-      try {
-        const doc = await openFolderEntry(firstFile);
-        navigation.navigate('Reader', { doc, workspace: ws, initialSidebarOpen: true });
-        return;
-      } catch (err) {
-        console.warn('Could not open first file in workspace:', err);
+    setLoadingOverlay(true);
+    setLoadingOverlayMsg(`Opening ${ws.name}…`);
+    try {
+      setActiveWorkspace(ws);
+      const firstFile = findFirstFileEntry(ws.entries || []);
+      if (firstFile) {
+        try {
+          setLoadingOverlayMsg(`Loading ${firstFile.name}…`);
+          const doc = await openFolderEntry(firstFile);
+          setLoadingOverlay(false);
+          navigation.navigate('Reader', { doc, workspace: ws, initialSidebarOpen: true });
+          return;
+        } catch (err) {
+          console.warn('Could not open first file in workspace:', err);
+        }
       }
+      setShowExplorerModal(true);
+    } finally {
+      setLoadingOverlay(false);
     }
-    setShowExplorerModal(true);
   };
 
   const handleDeleteDoc = async (id: string, name: string) => {
@@ -681,6 +705,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
           loadData();
         }}
       />
+
+      {/* Full-Screen Loading Overlay */}
+      <Modal visible={loadingOverlay} transparent animationType="fade">
+        <View style={styles.loadingOverlayBackdrop}>
+          <View style={[styles.loadingOverlayCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <ActivityIndicator size="large" color={theme.primary} style={{ marginBottom: 14 }} />
+            <Text style={[styles.loadingOverlayTitle, { color: theme.text }]}>{loadingOverlayMsg}</Text>
+            <Text style={[styles.loadingOverlaySub, { color: theme.textMuted }]}>Please wait a moment…</Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1024,6 +1059,37 @@ const styles = StyleSheet.create({
   },
   emptySubtitle: {
     fontSize: 12,
+    textAlign: 'center',
+  },
+  loadingOverlayBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loadingOverlayCard: {
+    width: '100%',
+    maxWidth: 320,
+    padding: 24,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  loadingOverlayTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  loadingOverlaySub: {
+    fontSize: 13,
     textAlign: 'center',
   },
 });

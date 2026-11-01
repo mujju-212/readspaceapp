@@ -91,6 +91,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
   const [filter, setFilter] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [openingUri, setOpeningUri] = useState<string | null>(null);
+  const [expandingUri, setExpandingUri] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [allWorkspaces, setAllWorkspaces] = useState<WorkspaceFolder[]>([]);
   const [needsReconnect, setNeedsReconnect] = useState(false);
@@ -163,8 +164,9 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
         console.warn('Could not load subfolder files in explorer:', e);
       }
     } else if (willOpen && entry && entry.isDirectory && !entry.isDrive && (!entry.children || entry.children.length === 0)) {
+      setExpandingUri(entry.uri);
       try {
-        const subEntries = await scanDirectoryUri(entry.uri, 2);
+        const subEntries = await scanDirectoryUri(entry.uri, 0);
         entry.children = subEntries;
         if (workspace) {
           const updatedWs = { ...workspace, entries: [...(workspace.entries || [])] };
@@ -172,6 +174,8 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
         }
       } catch (e) {
         console.warn('Could not load local subfolder in explorer:', e);
+      } finally {
+        setExpandingUri(null);
       }
     }
   };
@@ -330,7 +334,8 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
     return sorted.map((entry) => {
       if (entry.isDirectory) {
         const isOpen = !!expanded[entry.uri];
-        const childCount = entry.children?.length ?? 0;
+        const isExpanding = expandingUri === entry.uri;
+        const childCount = Array.isArray(entry.children) && entry.children.length > 0 ? entry.children.length : undefined;
         return (
           <View key={entry.uri}>
             <TouchableOpacity
@@ -339,7 +344,9 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
               activeOpacity={0.7}
             >
               <View style={styles.chevron}>
-                {isOpen ? (
+                {isExpanding ? (
+                  <ActivityIndicator size="small" color="#f59e0b" style={{ transform: [{ scale: 0.7 }] }} />
+                ) : isOpen ? (
                   <ChevronDown size={14} color={theme.textMuted} />
                 ) : (
                   <ChevronRight size={14} color={theme.textMuted} />
@@ -353,7 +360,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
               <Text style={[styles.folderName, { color: theme.text }]} numberOfLines={1}>
                 {entry.name}
               </Text>
-              {childCount > 0 && (
+              {childCount !== undefined && (
                 <Text style={[styles.childCount, { color: theme.textMuted }]}>{childCount}</Text>
               )}
             </TouchableOpacity>
@@ -546,6 +553,26 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
           )}
         </View>
       </View>
+
+      {/* Scanning status banner */}
+      {scanning && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 9, paddingHorizontal: 16, backgroundColor: theme.primary + '18', borderBottomWidth: 1, borderBottomColor: theme.border }}>
+          <ActivityIndicator size="small" color={theme.primary} style={{ marginRight: 8 }} />
+          <Text style={{ color: theme.primary, fontSize: 13, fontWeight: '600' }}>
+            Scanning folder contents…
+          </Text>
+        </View>
+      )}
+
+      {/* Opening file banner */}
+      {openingUri && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 9, paddingHorizontal: 16, backgroundColor: '#10b98118', borderBottomWidth: 1, borderBottomColor: '#10b98140' }}>
+          <ActivityIndicator size="small" color="#10b981" style={{ marginRight: 8 }} />
+          <Text style={{ color: '#10b981', fontSize: 13, fontWeight: '600' }}>
+            Opening document…
+          </Text>
+        </View>
+      )}
 
       {/* Tree Scroll View */}
       <ScrollView style={styles.treeScroll} showsVerticalScrollIndicator={false}>

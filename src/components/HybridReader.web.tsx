@@ -488,13 +488,13 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
             if (docBase64.startsWith('data:image/')) {
               imgSrc = docBase64;
             } else {
-              let mimeType = 'image/png';
-              if (docName.match(/\\.jpe?g$/i)) mimeType = 'image/jpeg';
-              else if (docName.match(/\\.webp$/i)) mimeType = 'image/webp';
-              else if (docName.match(/\\.gif$/i)) mimeType = 'image/gif';
-              else if (docName.match(/\\.svg$/i)) mimeType = 'image/svg+xml';
-              else if (docName.match(/\\.bmp$/i)) mimeType = 'image/bmp';
-              else if (docName.match(/\\.ico$/i)) mimeType = 'image/x-icon';
+              let mimeType = 'image/jpeg';
+              if (docBase64.indexOf('iVBORw0KGgo') === 0 || docName.match(/\.png$/i)) mimeType = 'image/png';
+              else if (docBase64.indexOf('R0lGOD') === 0 || docName.match(/\.gif$/i)) mimeType = 'image/gif';
+              else if (docBase64.indexOf('UklGR') === 0 || docName.match(/\.webp$/i)) mimeType = 'image/webp';
+              else if (docName.match(/\.svg$/i)) mimeType = 'image/svg+xml';
+              else if (docName.match(/\.bmp$/i)) mimeType = 'image/bmp';
+              else if (docName.match(/\.ico$/i)) mimeType = 'image/x-icon';
               imgSrc = 'data:' + mimeType + ';base64,' + docBase64;
             }
           } else if (docUri) {
@@ -584,9 +584,40 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           root.innerHTML = '<div class="reader-body">' + postDoc.body.innerHTML + '</div>';
         } else {
           // Plain Text or HTML
+          // Guard: Detect if binary JPEG or image was incorrectly routed to plain text
+          var isImageB64 = docBase64 && (
+            docBase64.indexOf('/9j/') === 0 ||
+            docBase64.indexOf('iVBORw0KGgo') === 0 ||
+            docBase64.indexOf('R0lGOD') === 0 ||
+            docBase64.indexOf('UklGR') === 0 ||
+            docBase64.slice(0, 50).indexOf('JFIF') !== -1 ||
+            docBase64.slice(0, 50).indexOf('Exif') !== -1
+          );
+
+          if (isImageB64) {
+            var mType = 'image/jpeg';
+            if (docBase64.indexOf('iVBORw0KGgo') === 0) mType = 'image/png';
+            else if (docBase64.indexOf('R0lGOD') === 0) mType = 'image/gif';
+            else if (docBase64.indexOf('UklGR') === 0) mType = 'image/webp';
+            var imgSrc = 'data:' + mType + ';base64,' + docBase64;
+            root.innerHTML = '<div class="image-viewer-container" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:85vh;padding:20px;">' +
+              '<img src="' + imgSrc + '" alt="' + escapeHtml(docName) + '" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.15);" />' +
+              '<div style="margin-top:14px;font-size:12px;color:var(--muted);">' + escapeHtml(docName) + '</div>' +
+            '</div>';
+            return;
+          }
+
           let rawText = '';
           if (docBase64) {
             rawText = new TextDecoder().decode(base64ToUint8Array(docBase64));
+            if (rawText && (rawText.indexOf('JFIF') !== -1 || rawText.indexOf('Exif') !== -1)) {
+              var imgSrc2 = 'data:image/jpeg;base64,' + docBase64;
+              root.innerHTML = '<div class="image-viewer-container" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:85vh;padding:20px;">' +
+                '<img src="' + imgSrc2 + '" alt="' + escapeHtml(docName) + '" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.15);" />' +
+                '<div style="margin-top:14px;font-size:12px;color:var(--muted);">' + escapeHtml(docName) + '</div>' +
+              '</div>';
+              return;
+            }
           } else if (docUri) {
             try {
               const res = await fetch(docUri);

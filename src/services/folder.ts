@@ -8,45 +8,104 @@ import { getWorkspaceBlob, saveAllWorkspaceFiles, hasWorkspaceBlobs } from './we
 
 const { StorageAccessFramework } = FileSystem;
 
-export function getKindFromExt(name: string): DocKind {
-  const ext = (name.split('.').pop() || '').toLowerCase();
-  switch (ext) {
-    case 'pdf': return 'pdf';
-    case 'docx': return 'docx';
-    case 'pptx': return 'pptx';
-    case 'mp3':
-    case 'wav':
-    case 'ogg':
-    case 'm4a':
-    case 'aac':
-    case 'flac':
-      return 'audio';
-    case 'mp4':
-    case 'webm':
-    case 'mov':
-    case 'mkv':
-      return 'video';
-    case 'md':
-    case 'markdown':
-      return 'markdown';
-    case 'html':
-    case 'htm':
-      return 'html';
-    case 'png':
-    case 'jpg':
-    case 'jpeg':
-    case 'webp':
-    case 'gif':
-    case 'svg':
-    case 'bmp':
-    case 'ico':
-    case 'avif':
-    case 'heic':
-    case 'tiff':
-      return 'image';
-    default:
-      return 'text';
+const KNOWN_FILE_EXTENSIONS = new Set([
+  'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'txt', 'md', 'markdown', 'html', 'htm',
+  'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico', 'avif', 'heic', 'tiff',
+  'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'mp4', 'webm', 'mov', 'mkv', 'avi',
+  'zip', 'rar', '7z', 'tar', 'gz', 'json', 'js', 'ts', 'tsx', 'jsx', 'py', 'java',
+  'c', 'cpp', 'h', 'hpp', 'rs', 'go', 'xml', 'yaml', 'yml', 'css', 'scss', 'csv',
+  'epub', 'mobi', 'log', 'sh', 'bat', 'cmd', 'sql', 'toml', 'ini', 'cfg', 'uuid'
+]);
+
+export function isFileName(name: string): boolean {
+  const trimmed = name.trim();
+  // Dotfiles like .uuid, .gitignore, .env are files
+  if (trimmed.startsWith('.') && trimmed.length > 1) {
+    return true;
   }
+  // Camera/screenshot patterns without extension:
+  if (/^(screenshot|img_|dsc_|pxl_|photo_|wp_|\d{8}_\d{6})/i.test(trimmed)) {
+    return true;
+  }
+  const lastDot = trimmed.lastIndexOf('.');
+  if (lastDot > 0 && lastDot < trimmed.length - 1) {
+    const ext = trimmed.substring(lastDot + 1).toLowerCase();
+    if (KNOWN_FILE_EXTENSIONS.has(ext) || ext.length <= 4) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function getKindFromExt(name: string, mimeType?: string, base64Snippet?: string): DocKind {
+  if (base64Snippet) {
+    if (base64Snippet.startsWith('/9j/') || base64Snippet.includes('JFIF') || base64Snippet.includes('Exif')) return 'image';
+    if (base64Snippet.startsWith('iVBORw0KGgo')) return 'image';
+    if (base64Snippet.startsWith('R0lGOD')) return 'image';
+    if (base64Snippet.startsWith('UklGR')) return 'image';
+    if (base64Snippet.startsWith('JVBERi0')) return 'pdf';
+    if (base64Snippet.startsWith('UEsDB')) return 'docx';
+  }
+
+  if (mimeType) {
+    if (mimeType.startsWith('image/')) return 'image';
+    if (mimeType.includes('pdf')) return 'pdf';
+    if (mimeType.includes('wordprocessingml') || mimeType.includes('msword')) return 'docx';
+    if (mimeType.includes('presentationml') || mimeType.includes('powerpoint')) return 'pptx';
+    if (mimeType.startsWith('audio/')) return 'audio';
+    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.includes('markdown')) return 'markdown';
+  }
+
+  const clean = name.trim().toLowerCase();
+  const lastDot = clean.lastIndexOf('.');
+  if (lastDot > 0 && lastDot < clean.length - 1) {
+    const ext = clean.substring(lastDot + 1);
+    switch (ext) {
+      case 'pdf': return 'pdf';
+      case 'docx': return 'docx';
+      case 'pptx': return 'pptx';
+      case 'mp3':
+      case 'wav':
+      case 'ogg':
+      case 'm4a':
+      case 'aac':
+      case 'flac':
+        return 'audio';
+      case 'mp4':
+      case 'webm':
+      case 'mov':
+      case 'mkv':
+        return 'video';
+      case 'md':
+      case 'markdown':
+        return 'markdown';
+      case 'html':
+      case 'htm':
+        return 'html';
+      case 'png':
+      case 'jpg':
+      case 'jpeg':
+      case 'webp':
+      case 'gif':
+      case 'svg':
+      case 'bmp':
+      case 'ico':
+      case 'avif':
+      case 'heic':
+      case 'tiff':
+        return 'image';
+      default:
+        return 'text';
+    }
+  }
+
+  // Files without explicit extension:
+  if (/^(screenshot|img_|dsc_|pxl_|photo_|wp_|\d{8}_\d{6})/i.test(clean)) {
+    return 'image';
+  }
+
+  return 'text';
 }
 
 /**
@@ -288,11 +347,11 @@ export function buildSafSubTreeUri(itemUri: string): string {
 }
 
 /**
- * Scan a directory URI safely on Android SAF (recursively loads subfolders and files)
+ * Scan a directory URI safely on Android SAF (fast, non-blocking initial scan + on-demand expansion)
  */
 export async function scanDirectoryUri(
   dirUri: string,
-  maxDepth = 3,
+  maxDepth = 0,
   currentDepth = 0
 ): Promise<FolderEntry[]> {
   if (!StorageAccessFramework) return [];
@@ -307,46 +366,46 @@ export async function scanDirectoryUri(
         name = name.split(':').pop() || name;
       }
 
-      let isDirectory = false;
+      // Check whether this item is a recognized file type or a folder
+      const isFile = isFileName(name);
+      let isDirectory = !isFile;
       let children: FolderEntry[] | undefined = undefined;
 
-      // 1. Inspect using getInfoAsync when available
-      try {
-        const info = await FileSystem.getInfoAsync(itemUri);
-        if (info.exists && info.isDirectory) {
-          isDirectory = true;
-        }
-      } catch {
-        // Fallback heuristic: items with no file extension are typically folders
-        const dotIndex = name.lastIndexOf('.');
-        if (dotIndex <= 0 || name.length - dotIndex > 5) {
-          isDirectory = true;
-        }
-      }
-
-      const subTreeUri = buildSafSubTreeUri(itemUri);
-
-      // Attempt scanning children if directory candidate
-      if (currentDepth < maxDepth) {
-        try {
-          const subChildren = await StorageAccessFramework.readDirectoryAsync(subTreeUri);
-          isDirectory = true;
-          // Recursively scan found subfolder
-          children = await scanDirectoryUri(subTreeUri, maxDepth, currentDepth + 1);
-        } catch {
+      // Only attempt reading immediate children if it is a directory and currentDepth < maxDepth
+      if (isDirectory) {
+        if (currentDepth < maxDepth) {
           try {
-            const subChildren = await StorageAccessFramework.readDirectoryAsync(itemUri);
-            isDirectory = true;
-            children = await scanDirectoryUri(itemUri, maxDepth, currentDepth + 1);
-          } catch {
-            // If read failed, keep as directory if info indicated it
-            if (isDirectory) {
+            const subUris = await StorageAccessFramework.readDirectoryAsync(itemUri);
+            const isLoop =
+              subUris.includes(itemUri) ||
+              subUris.includes(dirUri) ||
+              (uris.length > 0 && subUris.length === uris.length && subUris[0] === uris[0]);
+
+            if (isLoop) {
               children = [];
+            } else {
+              children = subUris.map((u) => {
+                let d = decodeURIComponent(u);
+                let n = d.split('/').pop() || d.split('%2F').pop() || 'Item';
+                if (n.includes(':')) n = n.split(':').pop() || n;
+                const subIsFile = isFileName(n);
+                return {
+                  name: n,
+                  uri: u,
+                  isDirectory: !subIsFile,
+                  kind: subIsFile ? getKindFromExt(n) : undefined,
+                  children: !subIsFile ? [] : undefined,
+                };
+              });
             }
+          } catch {
+            // Keep as directory with empty children if not expandable or empty
+            children = [];
           }
+        } else {
+          // Leave undefined so it can be dynamically expanded when tapped in tree
+          children = undefined;
         }
-      } else if (isDirectory) {
-        children = [];
       }
 
       results.push({
@@ -373,7 +432,9 @@ function countFiles(entries: FolderEntry[]): number {
   let count = 0;
   for (const e of entries) {
     if (e.isDirectory) {
-      if (e.children) count += countFiles(e.children);
+      if (e.children && e.children.length > 0) {
+        count += countFiles(e.children);
+      }
     } else {
       count++;
     }
@@ -564,6 +625,30 @@ export async function openFolderEntry(entry: FolderEntry): Promise<MobileDoc> {
     console.warn('Could not read base64 data for entry:', entry.name, e);
   }
 
+  // Inspect base64 data to detect real file format even if extension is missing or misleading
+  let resolvedKind = kind;
+  let resolvedMime = entry.mimeType;
+
+  if (base64Data) {
+    const head = base64Data.slice(0, 80);
+    if (head.startsWith('/9j/') || head.includes('JFIF') || head.includes('Exif')) {
+      resolvedKind = 'image';
+      resolvedMime = 'image/jpeg';
+    } else if (head.startsWith('iVBORw0KGgo')) {
+      resolvedKind = 'image';
+      resolvedMime = 'image/png';
+    } else if (head.startsWith('R0lGOD')) {
+      resolvedKind = 'image';
+      resolvedMime = 'image/gif';
+    } else if (head.startsWith('UklGR')) {
+      resolvedKind = 'image';
+      resolvedMime = 'image/webp';
+    } else if (head.startsWith('JVBERi0')) {
+      resolvedKind = 'pdf';
+      resolvedMime = 'application/pdf';
+    }
+  }
+
   // If on web and both base64Data and activeUri are completely unreadable
   if (Platform.OS === 'web' && !base64Data && (!activeUri || activeUri.startsWith('blob:'))) {
     const err: any = new Error(
@@ -578,9 +663,9 @@ export async function openFolderEntry(entry: FolderEntry): Promise<MobileDoc> {
     id: `file_${Date.now()}_${Math.random().toString(36).substring(7)}`,
     name: entry.name,
     uri: activeUri,
-    mime: entry.mimeType,
+    mime: resolvedMime || entry.mimeType,
     size: entry.size,
-    kind,
+    kind: resolvedKind,
     lastOpenedAt: Date.now(),
     base64Data,
   };

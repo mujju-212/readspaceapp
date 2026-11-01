@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   FlatList,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -72,6 +73,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
   const [showDriveLinkModal, setShowDriveLinkModal] = useState(false);
   const [driveLinkSaveMode, setDriveLinkSaveMode] = useState(false);
   const [showExplorerModal, setShowExplorerModal] = useState(false);
+  const [folderLoading, setFolderLoading] = useState(false);
+  const [folderLoadingMsg, setFolderLoadingMsg] = useState('Opening folder…');
 
   const theme = THEMES[settings.theme];
 
@@ -134,15 +137,20 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
   };
 
   const handlePickFolder = async () => {
+    setFolderLoading(true);
+    setFolderLoadingMsg('Opening directory…');
     try {
       const ws = await pickWorkspaceFolder();
       if (ws) {
+        setFolderLoadingMsg(`Scanning ${ws.name}…`);
         setActiveWorkspace(ws);
         await loadData();
         const firstFile = findFirstFileEntry(ws.entries || []);
         if (firstFile) {
           try {
+            setFolderLoadingMsg(`Opening ${firstFile.name}…`);
             const doc = await openFolderEntry(firstFile);
+            setFolderLoading(false);
             navigation.navigate('Reader', { doc, workspace: ws, initialSidebarOpen: true });
             return;
           } catch (err: any) {
@@ -153,6 +161,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
       }
     } catch (e: any) {
       Alert.alert('Folder Error', e.message || 'Could not open folder.');
+    } finally {
+      setFolderLoading(false);
     }
   };
 
@@ -498,12 +508,17 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                   onPress={async () => {
                     const firstFile = findFirstFileEntry(activeWorkspace.entries || []);
                     if (firstFile) {
+                      setFolderLoading(true);
+                      setFolderLoadingMsg(`Opening ${firstFile.name}…`);
                       try {
                         const doc = await openFolderEntry(firstFile);
+                        setFolderLoading(false);
                         navigation.navigate('Reader', { doc, workspace: activeWorkspace, initialSidebarOpen: true });
                         return;
                       } catch (e) {
                         console.warn('Could not open workspace first file:', e);
+                      } finally {
+                        setFolderLoading(false);
                       }
                     }
                     setShowExplorerModal(true);
@@ -873,6 +888,17 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
           loadData();
         }}
       />
+
+      {/* Full-Screen Loading Overlay */}
+      <Modal visible={folderLoading} transparent animationType="fade">
+        <View style={styles.loadingOverlayBackdrop}>
+          <View style={[styles.loadingOverlayCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <ActivityIndicator size="large" color={theme.primary} style={{ marginBottom: 14 }} />
+            <Text style={[styles.loadingOverlayTitle, { color: theme.text }]}>{folderLoadingMsg}</Text>
+            <Text style={[styles.loadingOverlaySub, { color: theme.textMuted }]}>Please wait a moment…</Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1075,5 +1101,36 @@ const styles = StyleSheet.create({
   viewModeText: {
     fontSize: 12,
     fontWeight: '600',
+  },
+  loadingOverlayBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loadingOverlayCard: {
+    width: '100%',
+    maxWidth: 320,
+    padding: 24,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  loadingOverlayTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  loadingOverlaySub: {
+    fontSize: 13,
+    textAlign: 'center',
   },
 });
