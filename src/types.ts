@@ -1,6 +1,6 @@
 import { ThemeName } from './theme/colors';
 
-export type DocKind = 'pdf' | 'docx' | 'pptx' | 'audio' | 'video' | 'markdown' | 'text' | 'html';
+export type DocKind = 'pdf' | 'docx' | 'pptx' | 'audio' | 'video' | 'markdown' | 'text' | 'html' | 'image';
 export type GDriveKind = 'file' | 'folder' | 'gdoc' | 'gsheet' | 'gppt';
 
 export interface MobileDoc {

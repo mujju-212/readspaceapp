@@ -183,11 +183,16 @@ export const Storage = {
 
   // Backend Server URL
   async getServerUrl(): Promise<string> {
+    const DEFAULT_URL = 'https://readspace-livid.vercel.app';
     try {
       const url = await AsyncStorage.getItem(KEYS.SERVER_URL);
-      return url || 'http://localhost:5173';
+      if (!url || url.includes('localhost') || url.includes('127.0.0.1')) {
+        await AsyncStorage.setItem(KEYS.SERVER_URL, DEFAULT_URL);
+        return DEFAULT_URL;
+      }
+      return url;
     } catch {
-      return 'http://localhost:5173';
+      return DEFAULT_URL;
     }
   },
 

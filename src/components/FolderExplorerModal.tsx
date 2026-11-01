@@ -29,9 +29,10 @@ import {
   AlertCircle,
   CloudUpload,
   Cloud,
+  Image as ImageIcon,
 } from 'lucide-react-native';
 import { FolderEntry, MobileDoc, WorkspaceFolder, DriveAccount, UserAccount, DocKind } from '../types';
-import { openFolderEntry, pickWorkspaceFolder, checkWorkspaceNeedReconnect } from '../services/folder';
+import { openFolderEntry, pickWorkspaceFolder, checkWorkspaceNeedReconnect, scanDirectoryUri } from '../services/folder';
 import { Storage } from '../services/storage';
 import { Api } from '../services/api';
 import { ThemeColors } from '../theme/colors';
@@ -54,6 +55,8 @@ function getIconForKind(kind: FolderEntry['kind'], color: string) {
     case 'docx':
     case 'pptx':
       return <FileText size={15} color="#3b82f6" />;
+    case 'image':
+      return <ImageIcon size={15} color="#10b981" />;
     case 'markdown':
     case 'html':
       return <FileCode size={15} color="#06b6d4" />;
@@ -130,7 +133,8 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
           const ext = (item.name || '').split('.').pop()?.toLowerCase() || '';
           let kind: DocKind | undefined = undefined;
           if (!isDir) {
-            if (ext === 'pdf' || item.mimeType?.includes('pdf') || item.mimeType?.includes('google-apps.document') || item.mimeType?.includes('google-apps.presentation')) kind = 'pdf';
+            if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext) || item.mimeType?.startsWith('image/')) kind = 'image';
+            else if (ext === 'pdf' || item.mimeType?.includes('pdf') || item.mimeType?.includes('google-apps.document') || item.mimeType?.includes('google-apps.presentation')) kind = 'pdf';
             else if (ext === 'docx' || item.mimeType?.includes('wordprocessingml')) kind = 'docx';
             else if (ext === 'pptx' || item.mimeType?.includes('presentationml')) kind = 'pptx';
             else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || item.mimeType?.startsWith('audio/')) kind = 'audio';
@@ -157,6 +161,17 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
         }
       } catch (e) {
         console.warn('Could not load subfolder files in explorer:', e);
+      }
+    } else if (willOpen && entry && entry.isDirectory && !entry.isDrive && (!entry.children || entry.children.length === 0)) {
+      try {
+        const subEntries = await scanDirectoryUri(entry.uri, 2);
+        entry.children = subEntries;
+        if (workspace) {
+          const updatedWs = { ...workspace, entries: [...(workspace.entries || [])] };
+          onWorkspaceChanged(updatedWs);
+        }
+      } catch (e) {
+        console.warn('Could not load local subfolder in explorer:', e);
       }
     }
   };

@@ -252,24 +252,80 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
       max-height: 100%;
     }
 
+    /* Image Viewer */
+    .image-viewer-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 85vh;
+      padding: 20px 14px 80px;
+      background: var(--bg);
+    }
+    .responsive-image {
+      max-width: 100%;
+      max-height: 75vh;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+    }
+    .image-info-bar {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+      text-align: center;
+      max-width: 90%;
+      word-break: break-all;
+    }
+
     /* Document Reader (Markdown / Text / DOCX / HTML) */
     .reader-body {
       padding: 20px 18px 80px;
       max-width: 760px;
       margin: 0 auto;
+      word-break: break-word;
+      overflow-wrap: break-word;
     }
-    .reader-body h1 { font-size: 1.6em; margin: 1em 0 0.5em; }
-    .reader-body h2 { font-size: 1.35em; margin: 1em 0 0.4em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-    .reader-body p { margin: 0.8em 0; }
+    .reader-body h1 { font-size: 1.7em; margin: 1.2em 0 0.5em; font-weight: 700; line-height: 1.25; }
+    .reader-body h2 { font-size: 1.4em; margin: 1.1em 0 0.4em; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    .reader-body h3 { font-size: 1.2em; margin: 1em 0 0.3em; font-weight: 600; }
+    .reader-body h4 { font-size: 1.05em; margin: 0.9em 0 0.25em; font-weight: 600; }
+    .reader-body p { margin: 0.8em 0; line-height: inherit; }
+    .reader-body ul, .reader-body ol { padding-left: 24px; margin: 0.8em 0; }
+    .reader-body li { margin: 0.35em 0; }
+    .reader-body blockquote {
+      margin: 1em 0;
+      padding: 8px 16px;
+      border-left: 4px solid var(--accent);
+      background: var(--panel);
+      color: var(--muted);
+      border-radius: 0 8px 8px 0;
+    }
+    .reader-body code {
+      background: rgba(150, 150, 150, 0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9em;
+    }
     .reader-body pre {
-      background: rgba(150, 150, 150, 0.1);
-      padding: 14px;
+      background: rgba(150, 150, 150, 0.12);
+      padding: 14px 16px;
       border-radius: 8px;
       overflow-x: auto;
-      font-size: 0.95em;
+      font-size: 0.9em;
+      border: 1px solid var(--border);
     }
-    .reader-body table { width: 100%; border-collapse: collapse; margin: 1em 0; }
-    .reader-body th, .reader-body td { border: 1px solid var(--border); padding: 6px 10px; }
+    .reader-body pre code {
+      background: transparent;
+      padding: 0;
+      border-radius: 0;
+    }
+    .reader-body table { width: 100%; border-collapse: collapse; margin: 1em 0; overflow-x: auto; display: block; }
+    .reader-body th, .reader-body td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+    .reader-body th { background: var(--panel); font-weight: 600; }
+    .reader-body hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+    .reader-body a { color: var(--accent); text-decoration: underline; }
     .reader-body img { max-width: 100%; height: auto; border-radius: 6px; }
     .reader-body svg { max-width: 100%; height: auto; }
     .loading-spinner {
@@ -332,12 +388,18 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
       return bytes;
     }
 
-    function decodeText(base64) {
+    function decodeUtf8Base64(base64) {
       if (!base64) return '';
       try {
-        return atob(base64);
+        const binString = atob(base64);
+        const bytes = Uint8Array.from(binString, (m) => m.charCodeAt(0));
+        return new TextDecoder('utf-8').decode(bytes);
       } catch (e) {
-        return base64; // already plaintext
+        try {
+          return decodeURIComponent(escape(atob(base64)));
+        } catch {
+          return atob(base64);
+        }
       }
     }
 
@@ -471,13 +533,57 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
               <video src="\${videoUrl}" controls playsinline autoplay></video>
             </div>
           \`;
+        } else if (docKind === 'image') {
+          let imgSrc = '';
+          if (docBase64) {
+            if (docBase64.startsWith('data:image/')) {
+              imgSrc = docBase64;
+            } else {
+              let mimeType = 'image/png';
+              if (docName.match(/\.jpe?g$/i)) mimeType = 'image/jpeg';
+              else if (docName.match(/\.webp$/i)) mimeType = 'image/webp';
+              else if (docName.match(/\.gif$/i)) mimeType = 'image/gif';
+              else if (docName.match(/\.svg$/i)) mimeType = 'image/svg+xml';
+              else if (docName.match(/\.bmp$/i)) mimeType = 'image/bmp';
+              else if (docName.match(/\.ico$/i)) mimeType = 'image/x-icon';
+              imgSrc = 'data:' + mimeType + ';base64,' + docBase64;
+            }
+          } else if (docUri) {
+            imgSrc = docUri;
+          }
+
+          if (!imgSrc) {
+            root.innerHTML = '<div class="loading-spinner"><p>⚠️ No image data found</p></div>';
+            return;
+          }
+
+          root.innerHTML = '<div class="image-viewer-container">' +
+            '<img src="' + imgSrc + '" alt="' + escapeHtml(docName) + '" class="responsive-image" />' +
+            '<div class="image-info-bar">' + escapeHtml(docName) + '</div>' +
+          '</div>';
         } else if (docKind === 'docx') {
           if (!docBase64) throw new Error('No DOCX data');
           const res = await mammoth.convertToHtml({ arrayBuffer: base64ToUint8Array(docBase64) });
           root.innerHTML = '<div class="reader-body">' + DOMPurify.sanitize(res.value) + '</div>';
         } else if (docKind === 'markdown') {
-          const rawText = decodeText(docBase64);
-          let dirty = marked.parse(rawText || '');
+          let rawText = '';
+          if (docBase64) {
+            rawText = decodeUtf8Base64(docBase64);
+          } else if (docUri) {
+            try {
+              const res = await fetch(docUri);
+              if (res.ok) rawText = await res.text();
+            } catch (err) {
+              console.warn('Could not fetch markdown from docUri:', err);
+            }
+          }
+
+          let dirty = '';
+          if (typeof marked !== 'undefined') {
+            dirty = marked.parse(rawText || '');
+          } else {
+            dirty = '<pre>' + escapeHtml(rawText || '') + '</pre>';
+          }
 
           // Rewrite <embed>/<object> SVG references to <img> so they render properly
           const pre = new DOMParser().parseFromString(dirty, 'text/html');
@@ -502,7 +608,7 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
             ADD_ATTR: ['target', 'id', 'xlink:href'],
             HTML_INTEGRATION_POINTS: { 'annotation-xml': true, foreignobject: true, desc: true, title: true }
           };
-          const clean = DOMPurify.sanitize(dirty, MD_SANITIZE);
+          const clean = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(dirty, MD_SANITIZE) : dirty;
           const postDoc = new DOMParser().parseFromString(clean, 'text/html');
 
           // Restrict <use> tags to only in-document fragments for security
@@ -529,7 +635,15 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           root.innerHTML = '<div class="reader-body">' + postDoc.body.innerHTML + '</div>';
         } else {
           // Plain Text or Notes
-          const rawText = decodeText(docBase64);
+          let rawText = '';
+          if (docBase64) {
+            rawText = decodeUtf8Base64(docBase64);
+          } else if (docUri) {
+            try {
+              const res = await fetch(docUri);
+              if (res.ok) rawText = await res.text();
+            } catch {}
+          }
           root.innerHTML = '<div class="reader-body"><pre style="white-space: pre-wrap; font-family: inherit; font-size: inherit; line-height: inherit;">' + escapeHtml(rawText) + '</pre></div>';
         }
       } catch (e) {

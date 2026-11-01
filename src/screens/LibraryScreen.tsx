@@ -291,7 +291,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
         const ext = (driveItem.name || '').split('.').pop()?.toLowerCase() || '';
 
         let kind: MobileDoc['kind'] = 'text';
-        if (ext === 'pdf' || mime.includes('pdf') || isGoogleDoc || isGoogleSlide) kind = 'pdf';
+        if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(ext) || mime.startsWith('image/')) kind = 'image';
+        else if (ext === 'pdf' || mime.includes('pdf') || isGoogleDoc || isGoogleSlide) kind = 'pdf';
         else if (ext === 'docx' || mime.includes('wordprocessingml')) kind = 'docx';
         else if (ext === 'pptx' || mime.includes('presentationml')) kind = 'pptx';
         else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || mime.startsWith('audio/')) kind = 'audio';
@@ -513,7 +514,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
 
             {/* Filter Chips */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-              {['all', 'pdf', 'pptx', 'docx', 'audio', 'video', 'markdown', 'text'].map((k) => (
+              {['all', 'pdf', 'image', 'pptx', 'docx', 'audio', 'video', 'markdown', 'text'].map((k) => (
                 <TouchableOpacity
                   key={k}
                   style={[

@@ -7,6 +7,7 @@ export function detectKind(fileName: string, mime?: string): DocKind {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
 
   if (ext === 'pdf' || mime?.includes('pdf')) return 'pdf';
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(ext) || mime?.includes('image')) return 'image';
   if (ext === 'docx' || ext === 'doc' || mime?.includes('word')) return 'docx';
   if (ext === 'pptx' || ext === 'ppt' || mime?.includes('presentation')) return 'pptx';
   if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || mime?.includes('audio')) return 'audio';

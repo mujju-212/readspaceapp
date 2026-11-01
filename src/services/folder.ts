@@ -32,6 +32,15 @@ export function getKindFromExt(name: string): DocKind {
     case 'html':
     case 'htm':
       return 'html';
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'webp':
+    case 'gif':
+    case 'svg':
+    case 'bmp':
+    case 'ico':
+      return 'image';
     default:
       return 'text';
   }
@@ -265,9 +274,13 @@ function pickWorkspaceFolderWeb(): Promise<WorkspaceFolder | null> {
 }
 
 /**
- * Scan a directory URI safely on Android SAF
+ * Scan a directory URI safely on Android SAF (recursively loads subfolders and files)
  */
-export async function scanDirectoryUri(dirUri: string): Promise<FolderEntry[]> {
+export async function scanDirectoryUri(
+  dirUri: string,
+  maxDepth = 3,
+  currentDepth = 0
+): Promise<FolderEntry[]> {
   if (!StorageAccessFramework) return [];
   try {
     const uris = await StorageAccessFramework.readDirectoryAsync(dirUri);
@@ -280,26 +293,24 @@ export async function scanDirectoryUri(dirUri: string): Promise<FolderEntry[]> {
         name = name.split(':').pop() || name;
       }
 
-      const hasExt = /\.[a-zA-Z0-9]{1,8}$/.test(name);
       let isDirectory = false;
       let children: FolderEntry[] | undefined = undefined;
 
-      if (!hasExt) {
-        // Test if it's a directory
+      // Detect if it is a directory by attempting readDirectoryAsync
+      if (currentDepth < maxDepth) {
         try {
-          const subUris = await StorageAccessFramework.readDirectoryAsync(itemUri);
+          const subChildren = await scanDirectoryUri(itemUri, maxDepth, currentDepth + 1);
           isDirectory = true;
-          children = subUris.map((sub) => {
-            let subDecoded = decodeURIComponent(sub);
-            let subName = subDecoded.split('/').pop() || subDecoded.split('%2F').pop() || 'Item';
-            if (subName.includes(':')) subName = subName.split(':').pop() || subName;
-            return {
-              name: subName,
-              uri: sub,
-              isDirectory: false,
-              kind: getKindFromExt(subName),
-            };
-          });
+          children = subChildren;
+        } catch {
+          isDirectory = false;
+        }
+      } else {
+        // At max depth, test if it's a directory
+        try {
+          await StorageAccessFramework.readDirectoryAsync(itemUri);
+          isDirectory = true;
+          children = [];
         } catch {
           isDirectory = false;
         }
@@ -346,7 +357,8 @@ export function createDriveWorkspace(folderId: string, folderName: string, items
     const ext = (item.name || '').split('.').pop()?.toLowerCase() || '';
     let kind: DocKind | undefined = undefined;
     if (!isDir) {
-      if (ext === 'pdf' || item.mimeType?.includes('pdf') || item.mimeType?.includes('google-apps.document') || item.mimeType?.includes('google-apps.presentation')) kind = 'pdf';
+      if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext) || item.mimeType?.startsWith('image/')) kind = 'image';
+      else if (ext === 'pdf' || item.mimeType?.includes('pdf') || item.mimeType?.includes('google-apps.document') || item.mimeType?.includes('google-apps.presentation')) kind = 'pdf';
       else if (ext === 'docx' || item.mimeType?.includes('wordprocessingml')) kind = 'docx';
       else if (ext === 'pptx' || item.mimeType?.includes('presentationml')) kind = 'pptx';
       else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || item.mimeType?.startsWith('audio/')) kind = 'audio';
@@ -404,7 +416,8 @@ export async function openFolderEntry(entry: FolderEntry): Promise<MobileDoc> {
     const ext = (entry.name || '').split('.').pop()?.toLowerCase() || '';
 
     let resolvedKind: MobileDoc['kind'] = 'text';
-    if (ext === 'pdf' || mime.includes('pdf') || isGoogleDoc || isGoogleSlide) resolvedKind = 'pdf';
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(ext) || mime.startsWith('image/')) resolvedKind = 'image';
+    else if (ext === 'pdf' || mime.includes('pdf') || isGoogleDoc || isGoogleSlide) resolvedKind = 'pdf';
     else if (ext === 'docx' || mime.includes('wordprocessingml')) resolvedKind = 'docx';
     else if (ext === 'pptx' || mime.includes('presentationml')) resolvedKind = 'pptx';
     else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || mime.startsWith('audio/')) resolvedKind = 'audio';
