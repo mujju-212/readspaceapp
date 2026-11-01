@@ -23,9 +23,14 @@ import {
   HardDrive,
   KeyRound,
   ShieldCheck,
+  RefreshCw,
+  Download,
+  CheckCircle2,
+  ExternalLink,
 } from 'lucide-react-native';
 import { Storage } from '../services/storage';
 import { Api } from '../services/api';
+import { UpdateService, AppUpdateInfo } from '../services/update';
 import { ReaderSettings, UserAccount, DriveAccount } from '../types';
 import { THEMES, ThemeName } from '../theme/colors';
 import { AuthModal } from '../components/AuthModal';
@@ -46,8 +51,31 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAccountSecurityModal, setShowAccountSecurityModal] = useState(false);
   const [docsCount, setDocsCount] = useState(0);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
 
   const theme = THEMES[settings.theme];
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    const info = await UpdateService.checkForUpdates();
+    setCheckingUpdate(false);
+    setUpdateInfo(info);
+    if (!info.isAvailable && !info.error) {
+      Alert.alert('App Up to Date', `ReadSpace v${info.currentVersion} is currently the latest version.`);
+    } else if (info.isAvailable) {
+      Alert.alert(
+        'Update Available',
+        `Version ${info.latestVersion} is available. Would you like to view and download it?`,
+        [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Download', onPress: () => UpdateService.openUpdateUrl(info.downloadUrl) },
+        ]
+      );
+    } else if (info.error) {
+      Alert.alert('Check Updates', info.error);
+    }
+  };
 
   const loadData = async () => {
     const url = await Storage.getServerUrl();
@@ -335,6 +363,62 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
           )}
         </View>
 
+        {/* App Updates Section */}
+        <Text style={[styles.sectionLabel, { color: theme.muted }]}>APP UPDATES</Text>
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={styles.optionRow}>
+            <View style={styles.optionInfo}>
+              <View style={styles.optionTitleRow}>
+                <RefreshCw size={15} color={theme.accent} />
+                <Text style={[styles.optionTitle, { color: theme.fg }]}>App Version</Text>
+              </View>
+              <Text style={[styles.optionDesc, { color: theme.muted }]}>
+                ReadSpace Mobile v{UpdateService.getCurrentVersion()} · Release Channel: Production
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.btnOutline, { borderColor: theme.border, marginLeft: 8 }]}
+              onPress={handleCheckUpdate}
+              disabled={checkingUpdate}
+              activeOpacity={0.7}
+            >
+              <RefreshCw size={13} color={theme.accent} />
+              <Text style={[styles.btnOutlineText, { color: theme.accent }]}>
+                {checkingUpdate ? 'Checking...' : 'Check Updates'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {updateInfo?.isAvailable && (
+            <View style={[styles.updateAvailableBanner, { backgroundColor: theme.sel, borderColor: theme.accent }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.updateAvailableTitle, { color: theme.accent }]}>
+                  Update Available: v{updateInfo.latestVersion}
+                </Text>
+                <Text style={[styles.updateAvailableNotes, { color: theme.fg }]} numberOfLines={2}>
+                  {updateInfo.releaseName || 'A new build is available with latest improvements.'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.downloadUpdateBtn, { backgroundColor: theme.accent }]}
+                onPress={() => UpdateService.openUpdateUrl(updateInfo.downloadUrl)}
+              >
+                <Download size={14} color={theme.accentFg} />
+                <Text style={[styles.downloadUpdateText, { color: theme.accentFg }]}>Install</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {updateInfo && !updateInfo.isAvailable && !updateInfo.error && (
+            <View style={styles.upToDateRow}>
+              <CheckCircle2 size={14} color="#16a34a" />
+              <Text style={[styles.upToDateText, { color: '#16a34a' }]}>
+                You are on the latest version ({updateInfo.currentVersion})
+              </Text>
+            </View>
+          )}
+        </View>
+
         {/* Footer info */}
         <View style={styles.footer}>
           <Text style={[styles.versionText, { color: theme.muted }]}>
@@ -563,6 +647,45 @@ const styles = StyleSheet.create({
   clearBtnText: {
     color: '#ef4444',
     fontSize: 12.5,
+    fontWeight: '600',
+  },
+  updateAvailableBanner: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  updateAvailableTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  updateAvailableNotes: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  downloadUpdateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  downloadUpdateText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  upToDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+  },
+  upToDateText: {
+    fontSize: 11.5,
     fontWeight: '600',
   },
   footer: {

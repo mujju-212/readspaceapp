@@ -9,30 +9,42 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#356ae6"
+      "backgroundColor": "#2563eb"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.readspace.app"
+      "bundleIdentifier": "com.readspace.app",
+      "infoPlist": {
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true,
+        "NSPhotoLibraryUsageDescription": "ReadSpace needs access to view and import your documents, notes, and attachments.",
+        "NSDocumentsFolderUsageDescription": "ReadSpace needs access to your documents folder to read and manage your local files."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#356ae6",
+        "backgroundColor": "#2563eb",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.readspace.app",
+      "versionCode": 1,
       "permissions": [
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "READ_MEDIA_AUDIO"
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      "expo-document-picker",
+      "expo-file-system"
     ]
   }
 }
