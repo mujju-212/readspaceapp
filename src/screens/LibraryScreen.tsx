@@ -35,8 +35,10 @@ import {
   PanelLeft,
   ChevronLeft,
   ChevronRight,
+  Download,
 } from 'lucide-react-native';
 import { Storage } from '../services/storage';
+import { DriveDownloadService } from '../services/driveDownload';
 import { useSessionVersion } from '../services/sessionBus';
 import { pickDocuments } from '../services/picker';
 import { pickWorkspaceFolder, openFolderEntry, findFirstFileEntry, createDriveWorkspace } from '../services/folder';
@@ -81,6 +83,13 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
   const [showExplorerModal, setShowExplorerModal] = useState(false);
   const [folderLoading, setFolderLoading] = useState(false);
   const [folderLoadingMsg, setFolderLoadingMsg] = useState('Opening folder…');
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+  const [downloadModal, setDownloadModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    progress?: number;
+  }>({ visible: false, title: '', message: '' });
 
   const theme = THEMES[settings.theme];
 
@@ -329,6 +338,47 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
   const handleOpenDriveFile = async (driveItem: any) => {
     setLoading(true);
     try {
+      const ext = (driveItem.name || '').split('.').pop()?.toLowerCase() || '';
+      const mime = driveItem.mimeType || '';
+      const isVideo = ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v'].includes(ext) || mime.startsWith('video/');
+      const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || mime.startsWith('audio/');
+
+      // Direct streaming path for media files: eliminates high RAM usage and avoids out-of-memory crashes
+      if (isVideo || isAudio) {
+        const serverUrl = await Storage.getServerUrl();
+        const token = await Storage.getSessionToken();
+        const apiKey = await Storage.getDriveApiKey();
+        let streamUrl = `${serverUrl}/api/drive/files/${encodeURIComponent(driveItem.id)}/content`;
+        if (token) {
+          streamUrl += `?token=${encodeURIComponent(token)}`;
+        } else if (apiKey) {
+          streamUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(driveItem.id)}?alt=media&key=${encodeURIComponent(apiKey)}`;
+        }
+
+        const doc: MobileDoc = {
+          id: `drive_${driveItem.id}`,
+          name: driveItem.name,
+          uri: streamUrl,
+          streamUrl,
+          mime: isVideo ? (mime || 'video/mp4') : (mime || 'audio/mpeg'),
+          kind: isVideo ? 'video' : 'audio',
+          isDrive: true,
+          driveFileId: driveItem.id,
+          lastOpenedAt: Date.now(),
+        };
+
+        await Storage.saveDoc(doc);
+        await loadData();
+
+        const currentCrumb = driveBreadcrumbs[driveBreadcrumbs.length - 1];
+        const driveWs = createDriveWorkspace(driveFolderId, currentCrumb?.name || 'Google Drive', driveFiles);
+        await Storage.saveWorkspace(driveWs);
+        setActiveWorkspace(driveWs);
+
+        navigation.navigate('Reader', { doc, workspace: driveWs, initialSidebarOpen: true });
+        return;
+      }
+
       const isGoogleDoc = driveItem.mimeType?.includes('google-apps.document');
       const isGoogleSheet = driveItem.mimeType?.includes('google-apps.spreadsheet');
       const isGoogleSlide = driveItem.mimeType?.includes('google-apps.presentation');
@@ -352,8 +402,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
         else if (ext === 'pdf' || mime.includes('pdf') || isGoogleDoc || isGoogleSlide) kind = 'pdf';
         else if (ext === 'docx' || mime.includes('wordprocessingml')) kind = 'docx';
         else if (ext === 'pptx' || mime.includes('presentationml')) kind = 'pptx';
-        else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || mime.startsWith('audio/')) kind = 'audio';
-        else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext) || mime.startsWith('video/')) kind = 'video';
+        else if (ext === 'html' || ext === 'htm' || mime.includes('html')) kind = 'html';
         else if (ext === 'md' || ext === 'markdown') kind = 'markdown';
         else if (isGoogleSheet || ext === 'csv' || mime.includes('csv')) kind = 'text';
 
@@ -387,6 +436,97 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDownloadDriveFile = async (item: any) => {
+    try {
+      setDownloadingFileId(item.id);
+      setDownloadModal({
+        visible: true,
+        title: 'Downloading File',
+        message: `Downloading "${item.name}" from Google Drive to local storage...`,
+        progress: 0,
+      });
+
+      await DriveDownloadService.downloadSingleFile({
+        fileId: item.id,
+        fileName: item.name,
+        mimeType: item.mimeType,
+        onProgress: (p) => {
+          setDownloadModal((prev) => ({ ...prev, progress: p }));
+        },
+      });
+
+      await loadData();
+      setDownloadModal({
+        visible: true,
+        title: 'Download Complete',
+        message: `Saved "${item.name}" to your local library.`,
+        progress: 100,
+      });
+
+      setTimeout(() => {
+        setDownloadModal({ visible: false, title: '', message: '' });
+      }, 1200);
+    } catch (e: any) {
+      setDownloadModal({ visible: false, title: '', message: '' });
+      Alert.alert('Download Failed', e?.message || 'Could not download file.');
+    } finally {
+      setDownloadingFileId(null);
+    }
+  };
+
+  const handleDownloadEntireFolder = async () => {
+    const currentCrumb = driveBreadcrumbs[driveBreadcrumbs.length - 1];
+    const folderName = currentCrumb?.name || 'Drive Folder';
+    Alert.alert(
+      'Download Folder Offline',
+      `Download all files inside "${folderName}" for offline reading?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Download Offline',
+          onPress: async () => {
+            setDownloadModal({
+              visible: true,
+              title: 'Downloading Folder',
+              message: 'Preparing download...',
+              progress: 0,
+            });
+            try {
+              const ws = await DriveDownloadService.downloadFolder({
+                folderId: driveFolderId,
+                folderName,
+                onProgress: (msg, cur, tot) => {
+                  const pct = tot > 0 ? Math.round((cur / tot) * 100) : 0;
+                  setDownloadModal({
+                    visible: true,
+                    title: 'Downloading Folder',
+                    message: msg,
+                    progress: pct,
+                  });
+                },
+              });
+              await loadData();
+              setActiveWorkspace(ws);
+              setDownloadModal({
+                visible: true,
+                title: 'Download Complete',
+                message: `Successfully downloaded ${ws.entries?.length || 0} file(s) into offline workspace "${folderName}".`,
+                progress: 100,
+              });
+              setTimeout(() => {
+                setDownloadModal({ visible: false, title: '', message: '' });
+                setTab('local');
+              }, 1500);
+            } catch (err: any) {
+              setDownloadModal({ visible: false, title: '', message: '' });
+              Alert.alert('Folder Download Failed', err?.message || 'Failed to download folder.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleOpenDriveFolderWorkspace = async () => {
@@ -937,6 +1077,13 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                     ))}
                   </ScrollView>
                   <TouchableOpacity
+                    style={[styles.refreshFolderBtn, { backgroundColor: theme.primary + '14', marginRight: 6 }]}
+                    onPress={handleDownloadEntireFolder}
+                    accessibilityLabel="Download folder locally"
+                  >
+                    <Download size={13} color={theme.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     style={[styles.refreshFolderBtn, { backgroundColor: theme.primary + '14' }]}
                     onPress={async () => {
                       setLoading(true);
@@ -992,7 +1139,25 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                                 : 'Cloud Document'}
                             </Text>
                           </View>
-                          {isFolder && <ChevronRight size={18} color={theme.textMuted} style={{ marginRight: 8 }} />}
+                          {isFolder ? (
+                            <ChevronRight size={18} color={theme.textMuted} style={{ marginRight: 8 }} />
+                          ) : (
+                            <TouchableOpacity
+                              style={{ padding: 8, marginRight: 4 }}
+                              onPress={(e) => {
+                                e.stopPropagation?.();
+                                handleDownloadDriveFile(item);
+                              }}
+                              disabled={downloadingFileId === item.id}
+                              accessibilityLabel={`Download ${item.name}`}
+                            >
+                              {downloadingFileId === item.id ? (
+                                <ActivityIndicator size="small" color={theme.primary} />
+                              ) : (
+                                <Download size={18} color={theme.primary} />
+                              )}
+                            </TouchableOpacity>
+                          )}
                         </TouchableOpacity>
                       </View>
                     );
@@ -1061,6 +1226,24 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
             <ActivityIndicator size="large" color={theme.primary} style={{ marginBottom: 14 }} />
             <Text style={[styles.loadingOverlayTitle, { color: theme.text }]}>{folderLoadingMsg}</Text>
             <Text style={[styles.loadingOverlaySub, { color: theme.textMuted }]}>Please wait a moment…</Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Download Progress Modal */}
+      <Modal visible={downloadModal.visible} transparent animationType="fade">
+        <View style={styles.loadingOverlayBackdrop}>
+          <View style={[styles.loadingOverlayCard, { backgroundColor: theme.surface, borderColor: theme.border, minWidth: 260 }]}>
+            <Download size={28} color={theme.primary} style={{ alignSelf: 'center', marginBottom: 12 }} />
+            <Text style={[styles.loadingOverlayTitle, { color: theme.text }]}>{downloadModal.title}</Text>
+            <Text style={[styles.loadingOverlaySub, { color: theme.textMuted, textAlign: 'center', marginBottom: 12 }]}>
+              {downloadModal.message}
+            </Text>
+            {downloadModal.progress !== undefined && downloadModal.progress > 0 && (
+              <View style={{ width: '100%', height: 6, backgroundColor: theme.border, borderRadius: 3, overflow: 'hidden' }}>
+                <View style={{ width: `${downloadModal.progress}%`, height: '100%', backgroundColor: theme.primary }} />
+              </View>
+            )}
           </View>
         </View>
       </Modal>

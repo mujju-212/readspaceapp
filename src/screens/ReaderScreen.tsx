@@ -25,10 +25,12 @@ import {
   Image as ImageIcon,
   Music,
   Video,
+  Download,
 } from 'lucide-react-native';
 import { HybridReader } from '../components/HybridReader';
 import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
 import { Storage } from '../services/storage';
+import { DriveDownloadService } from '../services/driveDownload';
 import { pickDocuments } from '../services/picker';
 import { MobileDoc, ReaderSettings, WorkspaceFolder } from '../types';
 import { THEMES, ThemeName } from '../theme/colors';
@@ -79,6 +81,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
   );
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [isZenMode, setIsZenMode] = useState(Boolean(settings.zen));
   const [savedSidebarState, setSavedSidebarState] = useState(sidebarOpen);
   const theme = THEMES[settings.theme];
@@ -263,6 +266,26 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
     }
   };
 
+  const handleDownloadCurrentDoc = async () => {
+    if (!currentDoc || isDownloading) return;
+    const fileId = currentDoc.driveFileId || currentDoc.id.replace('drive_', '').replace('gdrive_', '');
+    if (!fileId) return;
+
+    setIsDownloading(true);
+    try {
+      await DriveDownloadService.downloadSingleFile({
+        fileId,
+        fileName: currentDoc.name,
+        mimeType: currentDoc.mime,
+      });
+      Alert.alert('Download Complete', `"${currentDoc.name}" has been downloaded to local device storage.`);
+    } catch (err: any) {
+      Alert.alert('Download Failed', err?.message || 'Could not save file locally.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={[styles.safeArea, { backgroundColor: isZenMode ? theme.bg : theme.panel }]}>
       {/* Zen Mode Floating Exit Pill — anchored below the status-bar inset so it
@@ -334,6 +357,18 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
             >
               <Maximize2 size={18} color={theme.fg} />
             </TouchableOpacity>
+
+            {currentDoc?.isDrive && (
+              <TouchableOpacity
+                style={styles.actionIconBtn}
+                onPress={handleDownloadCurrentDoc}
+                disabled={isDownloading}
+                accessibilityLabel="Download file locally"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Download size={18} color={theme.fg} />
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={styles.actionIconBtn}

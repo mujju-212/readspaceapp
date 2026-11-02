@@ -880,7 +880,7 @@ export async function openFolderEntry(entry: FolderEntry): Promise<MobileDoc> {
           // fallback
         }
       }
-    } else if (kind === 'image' && (Platform.OS as string) !== 'web' && entry.uri) {
+    } else if ((kind === 'image' || kind === 'video' || kind === 'audio' || (entry.size && entry.size > 5 * 1024 * 1024)) && (Platform.OS as string) !== 'web' && entry.uri) {
       // Direct native streaming: avoid reading multi-megabyte base64 strings into JS memory
       const direct = safUriToFilePath(entry.uri);
       if (direct) activeUri = direct;

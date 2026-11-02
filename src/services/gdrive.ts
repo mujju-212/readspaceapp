@@ -131,6 +131,31 @@ export async function openDriveResource(
       } else {
         const metaRes = await Api.fetchWithBase(`/api/drive/files/${encodeURIComponent(parsed.id)}/meta${parsed.resourceKey ? `?resourceKey=${encodeURIComponent(parsed.resourceKey)}` : ''}`);
         const meta = metaRes.ok ? await metaRes.json() : { name: `File_${parsed.id}` };
+        const ext = (meta.name || '').split('.').pop()?.toLowerCase();
+        const contentType = meta.mimeType || 'application/octet-stream';
+        const isVideo = ['mp4', 'webm', 'mov', 'mkv'].includes(ext || '') || contentType.startsWith('video/');
+        const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext || '') || contentType.startsWith('audio/');
+
+        if (isVideo || isAudio) {
+          const token = await Storage.getSessionToken();
+          let streamUrl = `${serverUrl}/api/drive/files/${encodeURIComponent(parsed.id)}/content`;
+          if (token) streamUrl += `?token=${encodeURIComponent(token)}`;
+          else if (apiKey) streamUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(parsed.id)}?alt=media&key=${encodeURIComponent(apiKey)}`;
+
+          const doc: MobileDoc = {
+            id: `gdrive_${parsed.id}`,
+            name: meta.name || customTitle || `File_${parsed.id}`,
+            uri: streamUrl,
+            streamUrl,
+            mime: contentType,
+            kind: isVideo ? 'video' : 'audio',
+            isDrive: true,
+            driveFileId: parsed.id,
+            lastOpenedAt: Date.now(),
+          };
+          await Storage.saveDoc(doc);
+          return { doc };
+        }
 
         const contentRes = await Api.fetchWithBase(`/api/drive/files/${encodeURIComponent(parsed.id)}/content${parsed.resourceKey ? `?resourceKey=${encodeURIComponent(parsed.resourceKey)}` : ''}`);
         if (contentRes.ok) {

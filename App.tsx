@@ -13,6 +13,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { Storage } from './src/services/storage';
 import { Api } from './src/services/api';
 import { sessionBus } from './src/services/sessionBus';
@@ -139,6 +140,14 @@ export default function App() {
     };
   }, []);
 
+  // Fallback timer: ensure splash screen ALWAYS dismisses within 1.5s even if navReady is delayed
+  useEffect(() => {
+    const safety = setTimeout(() => {
+      setSplashVisible(false);
+    }, 1500);
+    return () => clearTimeout(safety);
+  }, []);
+
   // Ensure logo splash stays visible until both settings and navigation are mounted,
   // with a minimum duration to guarantee no white/blank flash occurs.
   useEffect(() => {
@@ -161,7 +170,7 @@ export default function App() {
           }
         }, 500);
       }
-    }, 700);
+    }, 500);
 
     return () => clearTimeout(timer);
   }, [settingsReady, navReady]);
@@ -184,21 +193,23 @@ export default function App() {
   };
 
   return (
-    <SafeAreaProvider>
+    <SafeAreaProvider style={{ flex: 1, backgroundColor: splashVisible ? BRAND_BG : currentTheme.bg }}>
       <StatusBar
         style={splashVisible ? 'light' : (isDark ? 'light' : 'dark')}
         backgroundColor={splashVisible ? BRAND_BG : currentTheme.bg}
       />
-      <NavigationContainer
-        theme={navTheme}
-        onReady={() => setNavReady(true)}
-      >
-        <RootNavigator settings={settings} onUpdateSettings={handleUpdateSettings} />
-      </NavigationContainer>
+      <ErrorBoundary>
+        <NavigationContainer
+          theme={navTheme}
+          onReady={() => setNavReady(true)}
+        >
+          <RootNavigator settings={settings} onUpdateSettings={handleUpdateSettings} />
+        </NavigationContainer>
+      </ErrorBoundary>
 
       {/* Branded Logo Overlay: perfectly covers transition from native splash to avoid blank screen */}
       {splashVisible && (
-        <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
+        <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
           <BrandLoading />
         </View>
       )}

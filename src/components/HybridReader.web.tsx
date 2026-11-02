@@ -283,6 +283,36 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     .reader-body th, .reader-body td { border: 1px solid var(--border); padding: 6px 10px; }
     .reader-body img { max-width: 100%; height: auto; border-radius: 6px; }
     .reader-body svg { max-width: 100%; height: auto; }
+    .html-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .html-toggle-group {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .html-toggle-btn {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .html-toggle-btn.active {
+      background: var(--accent);
+      color: var(--accent-fg);
+    }
     .loading-spinner {
       display: flex;
       flex-direction: column;
@@ -318,6 +348,7 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     const docName = ${JSON.stringify(doc.name || 'Document')};
     const docBase64 = ${JSON.stringify(doc.base64Data || '')};
     const docUri = ${JSON.stringify(doc.uri || '')};
+    const docStreamUrl = ${JSON.stringify((doc as any).streamUrl || '')};
 
     function sendPosition(pos) {
       if (window.ReactNativeWebView) {
@@ -445,7 +476,7 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 
           root.innerHTML = '<div class="pptx-container">' + slidesHtml + '</div>';
         } else if (docKind === 'audio') {
-          const audioUrl = docBase64 ? 'data:audio/mpeg;base64,' + docBase64 : docUri;
+          const audioUrl = docStreamUrl || docUri || (docBase64 ? 'data:audio/mpeg;base64,' + docBase64 : '');
           root.innerHTML = '<div class="audio-wrap">' +
             '<div class="audio-card">' +
               '<div class="audio-disc">🎵</div>' +
@@ -485,9 +516,9 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
             }
           };
         } else if (docKind === 'video') {
-          const videoUrl = docBase64 ? 'data:video/mp4;base64,' + docBase64 : docUri;
+          const videoUrl = docStreamUrl || docUri || (docBase64 ? 'data:video/mp4;base64,' + docBase64 : '');
           root.innerHTML = '<div class="video-wrap">' +
-            '<video src="' + videoUrl + '" controls playsinline autoplay></video>' +
+            '<video src="' + videoUrl + '" controls playsinline autoplay style="max-width:100%; max-height:88vh; outline:none; border-radius:10px;"></video>' +
             '</div>';
         } else if (docKind === 'image') {
           let imgSrc = '';
@@ -589,8 +620,66 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           });
 
           root.innerHTML = '<div class="reader-body">' + postDoc.body.innerHTML + '</div>';
+        } else if (docKind === 'html') {
+          let rawHtml = '';
+          if (docBase64) {
+            rawHtml = new TextDecoder().decode(base64ToUint8Array(docBase64));
+          } else if (docUri) {
+            try {
+              const res = await fetch(docUri);
+              if (res.ok) rawHtml = await res.text();
+            } catch (err) {
+              console.warn('Could not fetch HTML from docUri:', err);
+            }
+          }
+
+          const sanitizer = (typeof DOMPurify !== 'undefined' ? DOMPurify : (typeof window !== 'undefined' ? window.DOMPurify : null));
+          const cleanHtml = sanitizer && typeof sanitizer.sanitize === 'function'
+            ? sanitizer.sanitize(rawHtml, {
+                ADD_TAGS: ['style', 'link', 'use', 'foreignObject', 'iframe', 'svg', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
+                ADD_ATTR: ['target', 'id', 'xlink:href', 'src', 'href', 'style', 'class', 'width', 'height', 'align', 'colspan', 'rowspan'],
+                WHOLE_DOCUMENT: false,
+              })
+            : rawHtml;
+
+          window._rawHtmlCode = rawHtml;
+          window._cleanHtmlPreview = cleanHtml;
+
+          window.switchHtmlView = function(mode) {
+            const previewEl = document.getElementById('htmlPreviewPane');
+            const codeEl = document.getElementById('htmlCodePane');
+            const btnPrev = document.getElementById('btnHtmlPreview');
+            const btnCode = document.getElementById('btnHtmlCode');
+            if (mode === 'preview') {
+              if (previewEl) previewEl.style.display = 'block';
+              if (codeEl) codeEl.style.display = 'none';
+              if (btnPrev) btnPrev.classList.add('active');
+              if (btnCode) btnCode.classList.remove('active');
+            } else {
+              if (previewEl) previewEl.style.display = 'none';
+              if (codeEl) codeEl.style.display = 'block';
+              if (btnPrev) btnPrev.classList.remove('active');
+              if (btnCode) btnCode.classList.add('active');
+            }
+          };
+
+          root.innerHTML = '<div class="reader-body">' +
+            '<div class="html-toolbar">' +
+              '<span style="font-size:12px; font-weight:600; color:var(--muted);">🌐 HTML Document</span>' +
+              '<div class="html-toggle-group">' +
+                '<button type="button" id="btnHtmlPreview" class="html-toggle-btn active" onclick="switchHtmlView(\'preview\')">👁️ Preview</button>' +
+                '<button type="button" id="btnHtmlCode" class="html-toggle-btn" onclick="switchHtmlView(\'code\')">&lt;/&gt; Source</button>' +
+              '</div>' +
+            '</div>' +
+            '<div id="htmlPreviewPane" class="html-preview-content" style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:18px; min-height:400px; overflow-x:auto;">' +
+              (cleanHtml || '<div style="padding:40px; text-align:center; color:var(--muted);">Empty HTML document</div>') +
+            '</div>' +
+            '<div id="htmlCodePane" style="display:none;">' +
+              '<pre class="reader-code" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.5; padding:16px; background:var(--panel); border:1px solid var(--border); border-radius:10px;">' + escapeHtml(rawHtml) + '</pre>' +
+            '</div>' +
+          '</div>';
         } else {
-          // Plain Text or HTML
+          // Plain Text
           // Guard: Detect if binary JPEG or image was incorrectly routed to plain text
           var isImageB64 = docBase64 && (
             docBase64.indexOf('/9j/') === 0 ||

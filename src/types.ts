@@ -7,6 +7,7 @@ export interface MobileDoc {
   id: string;
   name: string;
   uri: string;
+  streamUrl?: string;
   mime?: string;
   size?: number;
   kind: DocKind;

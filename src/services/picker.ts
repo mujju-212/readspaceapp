@@ -42,39 +42,44 @@ export async function pickDocuments(): Promise<MobileDoc[]> {
       const id = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
       let base64Data: string | undefined = undefined;
+      // CRITICAL: NEVER read video, audio, or files > 5MB into Base64 strings in memory to avoid OOM crashes!
+      const isLargeMedia = kind === 'video' || kind === 'audio' || (asset.size && asset.size > 5 * 1024 * 1024);
+
       try {
-        if (Platform.OS === 'web') {
-          const fileObj = (asset as any).file;
-          if (fileObj) {
-            base64Data = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                const res = reader.result as string;
-                resolve(res.includes(',') ? res.split(',')[1] : res);
-              };
-              reader.onerror = () => resolve(undefined as any);
-              reader.readAsDataURL(fileObj);
-            });
-          } else if (asset.uri) {
-            const res = await fetch(asset.uri);
-            const blob = await res.blob();
-            base64Data = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                const res = reader.result as string;
-                resolve(res.includes(',') ? res.split(',')[1] : res);
-              };
-              reader.onerror = () => resolve(undefined as any);
-              reader.readAsDataURL(blob);
-            });
-          }
-        } else {
-          try {
-            base64Data = await FileSystem.readAsStringAsync(asset.uri, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
-          } catch (readErr) {
-            console.warn('[picker] Failed to read base64 from uri:', asset.uri, readErr);
+        if (!isLargeMedia) {
+          if (Platform.OS === 'web') {
+            const fileObj = (asset as any).file;
+            if (fileObj) {
+              base64Data = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const res = reader.result as string;
+                  resolve(res.includes(',') ? res.split(',')[1] : res);
+                };
+                reader.onerror = () => resolve(undefined as any);
+                reader.readAsDataURL(fileObj);
+              });
+            } else if (asset.uri) {
+              const res = await fetch(asset.uri);
+              const blob = await res.blob();
+              base64Data = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const res = reader.result as string;
+                  resolve(res.includes(',') ? res.split(',')[1] : res);
+                };
+                reader.onerror = () => resolve(undefined as any);
+                reader.readAsDataURL(blob);
+              });
+            }
+          } else {
+            try {
+              base64Data = await FileSystem.readAsStringAsync(asset.uri, {
+                encoding: FileSystem.EncodingType.Base64,
+              });
+            } catch (readErr) {
+              console.warn('[picker] Failed to read base64 from uri:', asset.uri, readErr);
+            }
           }
         }
       } catch {

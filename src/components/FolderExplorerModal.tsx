@@ -32,8 +32,10 @@ import {
   Cloud,
   Image as ImageIcon,
   Trash2,
+  Download,
 } from 'lucide-react-native';
 import { FolderEntry, MobileDoc, WorkspaceFolder, DriveAccount, UserAccount, DocKind } from '../types';
+import { DriveDownloadService } from '../services/driveDownload';
 import {
   openFolderEntry,
   pickWorkspaceFolder,
@@ -353,6 +355,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
             else if (ext === 'pptx' || item.mimeType?.includes('presentationml')) kind = 'pptx';
             else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || item.mimeType?.startsWith('audio/')) kind = 'audio';
             else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext) || item.mimeType?.startsWith('video/')) kind = 'video';
+            else if (ext === 'html' || ext === 'htm' || item.mimeType?.includes('html')) kind = 'html';
             else if (ext === 'md' || ext === 'markdown') kind = 'markdown';
             else kind = 'text';
           }
@@ -433,6 +436,40 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
               onWorkspaceChanged(remaining[0]);
             } else {
               onClose?.();
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDownloadDriveWorkspace = async () => {
+    if (!workspace || !workspace.isDrive) return;
+    const folderId = workspace.driveFolderId || workspace.uri?.replace('gdrive://', '') || 'root';
+    const folderName = workspace.name || 'Drive Folder';
+
+    Alert.alert(
+      'Download Workspace Offline',
+      `Download all files from "${folderName}" to device storage so you can read them without an internet connection?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Download Offline',
+          onPress: async () => {
+            setScanning(true);
+            try {
+              const localWs = await DriveDownloadService.downloadFolder({
+                folderId,
+                folderName,
+              });
+              onWorkspaceChanged(localWs);
+              const all = await Storage.getWorkspaces();
+              setAllWorkspaces(all);
+              Alert.alert('Download Complete', `Downloaded ${localWs.entries?.length || 0} files into offline workspace "${folderName}".`);
+            } catch (err: any) {
+              Alert.alert('Download Failed', err?.message || 'Could not download folder.');
+            } finally {
+              setScanning(false);
             }
           },
         },
@@ -672,6 +709,16 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
                 : 'Folder view'}
             </Text>
           </View>
+          {workspace?.isDrive && (
+            <TouchableOpacity
+              style={[styles.iconBtn, { marginLeft: 6 }]}
+              onPress={handleDownloadDriveWorkspace}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Download Drive workspace locally"
+            >
+              <Download size={15} color={theme.primary} />
+            </TouchableOpacity>
+          )}
           {workspace && (
             <TouchableOpacity
               style={[styles.iconBtn, { marginLeft: 6 }]}
