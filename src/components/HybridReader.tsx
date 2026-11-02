@@ -10,6 +10,7 @@ import {
   Animated,
   PanResponder,
   TouchableOpacity,
+  Dimensions,
 } from 'react-native';
 import { MobileDoc, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
@@ -41,32 +42,56 @@ const NativeImageViewer: React.FC<{
   name: string;
   themeColors: any;
 }> = ({ imageUri, name, themeColors }) => {
+  const { width: winWidth, height: winHeight } = Dimensions.get('window');
   const scale = useRef(new Animated.Value(1)).current;
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const [scaleDisplay, setScaleDisplay] = useState(1);
 
   const scaleNum = useRef(1);
   const panOffset = useRef({ x: 0, y: 0 });
-  const lastTouchTime = useRef(0);
+  const touchStartPoint = useRef({ x: 0, y: 0 });
+  const initialPanAtTouch = useRef({ x: 0, y: 0 });
   const initialDistance = useRef(0);
   const baseScaleOnPinch = useRef(1);
+  const isPinching = useRef(false);
+  const lastTapTime = useRef(0);
 
-  const animateTo = (newScale: number, newX = 0, newY = 0) => {
-    const clampedScale = Math.min(6, Math.max(0.6, newScale));
+  const clampBounds = (x: number, y: number, currentScale: number) => {
+    if (currentScale <= 1.05) {
+      return { x: 0, y: 0 };
+    }
+    const maxBoundX = Math.max(0, (winWidth * (currentScale - 1)) / 2 + 30);
+    const maxBoundY = Math.max(0, (winHeight * (currentScale - 1)) / 2 + 50);
+    return {
+      x: Math.min(maxBoundX, Math.max(-maxBoundX, x)),
+      y: Math.min(maxBoundY, Math.max(-maxBoundY, y)),
+    };
+  };
+
+  const animateTo = (newScale: number, targetX?: number, targetY?: number) => {
+    const clampedScale = Math.min(6, Math.max(1, newScale));
     scaleNum.current = clampedScale;
     setScaleDisplay(clampedScale);
-    panOffset.current = { x: newX, y: newY };
+
+    const bounded = clampBounds(
+      targetX !== undefined ? targetX : panOffset.current.x,
+      targetY !== undefined ? targetY : panOffset.current.y,
+      clampedScale
+    );
+    panOffset.current = bounded;
 
     Animated.parallel([
       Animated.spring(scale, {
         toValue: clampedScale,
         useNativeDriver: true,
-        friction: 7,
+        friction: 8,
+        tension: 40,
       }),
       Animated.spring(pan, {
-        toValue: { x: newX, y: newY },
+        toValue: bounded,
         useNativeDriver: true,
-        friction: 7,
+        friction: 8,
+        tension: 40,
       }),
     ]).start();
   };
@@ -77,59 +102,89 @@ const NativeImageViewer: React.FC<{
       onMoveShouldSetPanResponder: () => true,
 
       onPanResponderGrant: (evt) => {
-        if (evt.nativeEvent.touches.length === 2) {
-          const [t0, t1] = evt.nativeEvent.touches;
+        const touches = evt.nativeEvent.touches;
+        if (touches.length === 2) {
+          isPinching.current = true;
+          const [t0, t1] = touches;
           initialDistance.current = Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY);
           baseScaleOnPinch.current = scaleNum.current;
-        } else if (evt.nativeEvent.touches.length === 1) {
+        } else if (touches.length === 1) {
+          isPinching.current = false;
+          touchStartPoint.current = { x: touches[0].pageX, y: touches[0].pageY };
+          initialPanAtTouch.current = { ...panOffset.current };
+
+          // Double tap detection
           const now = Date.now();
-          if (now - lastTouchTime.current < 300) {
-            // Double tap detected!
-            if (scaleNum.current > 1.2) {
+          if (now - lastTapTime.current < 320) {
+            lastTapTime.current = 0;
+            if (scaleNum.current > 1.3) {
               animateTo(1, 0, 0);
             } else {
-              animateTo(2.5, 0, 0);
+              animateTo(2.6, 0, 0);
             }
+            return;
           }
-          lastTouchTime.current = now;
+          lastTapTime.current = now;
         }
       },
 
-      onPanResponderMove: (evt, gestureState) => {
-        if (evt.nativeEvent.touches.length === 2) {
-          // Pinch to zoom
-          const [t0, t1] = evt.nativeEvent.touches;
+      onPanResponderMove: (evt) => {
+        const touches = evt.nativeEvent.touches;
+
+        if (touches.length === 2) {
+          isPinching.current = true;
+          const [t0, t1] = touches;
           const currentDistance = Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY);
           if (initialDistance.current > 0) {
             const ratio = currentDistance / initialDistance.current;
-            const newScale = Math.min(6, Math.max(0.6, baseScaleOnPinch.current * ratio));
-            scale.setValue(newScale);
-            scaleNum.current = newScale;
-            setScaleDisplay(newScale);
+            const targetScale = Math.min(6, Math.max(0.7, baseScaleOnPinch.current * ratio));
+            scale.setValue(targetScale);
+            scaleNum.current = targetScale;
+            setScaleDisplay(targetScale);
           }
-        } else if (evt.nativeEvent.touches.length === 1 && scaleNum.current > 1) {
-          // Pan when zoomed in
-          const newX = panOffset.current.x + gestureState.dx;
-          const newY = panOffset.current.y + gestureState.dy;
-          pan.setValue({ x: newX, y: newY });
+        } else if (touches.length === 1 && !isPinching.current) {
+          const dx = touches[0].pageX - touchStartPoint.current.x;
+          const dy = touches[0].pageY - touchStartPoint.current.y;
+
+          if (scaleNum.current > 1.05) {
+            const rawX = initialPanAtTouch.current.x + dx;
+            const rawY = initialPanAtTouch.current.y + dy;
+            const bounded = clampBounds(rawX, rawY, scaleNum.current);
+            pan.setValue(bounded);
+            panOffset.current = bounded;
+          }
         }
       },
 
-      onPanResponderRelease: (evt, gestureState) => {
-        if (scaleNum.current > 1) {
-          panOffset.current.x += gestureState.dx;
-          panOffset.current.y += gestureState.dy;
+      onPanResponderRelease: () => {
+        if (isPinching.current) {
+          isPinching.current = false;
+          if (scaleNum.current < 1) {
+            animateTo(1, 0, 0);
+          } else {
+            const bounded = clampBounds(panOffset.current.x, panOffset.current.y, scaleNum.current);
+            animateTo(scaleNum.current, bounded.x, bounded.y);
+          }
         } else {
-          animateTo(1, 0, 0);
+          if (scaleNum.current <= 1.05) {
+            animateTo(1, 0, 0);
+          } else {
+            const bounded = clampBounds(panOffset.current.x, panOffset.current.y, scaleNum.current);
+            animateTo(scaleNum.current, bounded.x, bounded.y);
+          }
         }
+      },
+      onPanResponderTerminate: () => {
+        isPinching.current = false;
+        animateTo(scaleNum.current <= 1.05 ? 1 : scaleNum.current);
       },
     })
   ).current;
 
-  const zoomIn = () => animateTo(scaleNum.current * 1.3, panOffset.current.x, panOffset.current.y);
-  const zoomOut = () => animateTo(scaleNum.current * 0.77, panOffset.current.x, panOffset.current.y);
+  const zoomIn = () => animateTo(scaleNum.current * 1.35);
+  const zoomOut = () => animateTo(scaleNum.current * 0.74);
   const resetZoom = () => animateTo(1, 0, 0);
-  const fitWidth = () => animateTo(2.3, 0, 0);
+  const fitWidth = () => animateTo(2.4, 0, 0);
 
   return (
     <View style={[styles.container, styles.imageNativeContainer, { backgroundColor: themeColors.bg }]}>

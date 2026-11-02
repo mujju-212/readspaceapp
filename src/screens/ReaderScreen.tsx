@@ -21,6 +21,10 @@ import {
   Plus,
   X,
   FileText,
+  FileCode,
+  Image as ImageIcon,
+  Music,
+  Video,
 } from 'lucide-react-native';
 import { HybridReader } from '../components/HybridReader';
 import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
@@ -28,6 +32,28 @@ import { Storage } from '../services/storage';
 import { pickDocuments } from '../services/picker';
 import { MobileDoc, ReaderSettings, WorkspaceFolder } from '../types';
 import { THEMES, ThemeName } from '../theme/colors';
+
+function getTabIconForKind(kind?: MobileDoc['kind'], active = false, accent = '#2563eb') {
+  const size = 13;
+  switch (kind) {
+    case 'pdf':
+      return <FileText size={size} color="#ef4444" />;
+    case 'docx':
+    case 'pptx':
+      return <FileText size={size} color="#3b82f6" />;
+    case 'image':
+      return <ImageIcon size={size} color="#10b981" />;
+    case 'audio':
+      return <Music size={size} color="#8b5cf6" />;
+    case 'video':
+      return <Video size={size} color="#ec4899" />;
+    case 'markdown':
+    case 'html':
+      return <FileCode size={size} color="#06b6d4" />;
+    default:
+      return <FileText size={size} color={active ? accent : '#64748b'} />;
+  }
+}
 
 interface ReaderScreenProps {
   route: any;
@@ -193,14 +219,23 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
     if (isBookmarked) {
       await Storage.removeBookmark(currentDoc.id);
       setIsBookmarked(false);
+      Alert.alert('Removed', `"${currentDoc.name}" removed from saved files.`);
     } else {
       await Storage.addBookmark({
         id: `bm_${Date.now()}`,
         docId: currentDoc.id,
         title: currentDoc.name,
+        kind: currentDoc.kind,
+        uri: currentDoc.uri,
+        size: currentDoc.size,
+        mime: currentDoc.mime,
+        isDrive: currentDoc.isDrive,
+        driveFileId: currentDoc.driveFileId,
+        base64Data: currentDoc.base64Data,
         createdAt: Date.now(),
       });
       setIsBookmarked(true);
+      Alert.alert('Saved to Bookmarks', `"${currentDoc.name}" is saved. You can find it under the Saved tab in your Library.`);
     }
   };
 
@@ -298,7 +333,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
         </View>
       )}
 
-      {/* File Switcher Tab Bar (Like Web App TabBar) */}
+      {/* File Switcher Tab Bar */}
       {!isZenMode && (
         <View style={[styles.tabBarContainer, { backgroundColor: theme.panel, borderBottomColor: theme.border }]}>
           <ScrollView
@@ -314,14 +349,16 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
                   style={[
                     styles.tabItem,
                     {
-                      backgroundColor: active ? theme.sel : 'transparent',
+                      backgroundColor: active ? theme.sel : (theme.bg || '#f8fafc'),
                       borderColor: active ? theme.accent : theme.border,
                     },
                   ]}
                   onPress={() => handleSelectTab(tab)}
                   activeOpacity={0.7}
                 >
-                  <FileText size={12} color={active ? theme.accent : theme.muted} style={{ marginRight: 6 }} />
+                  <View style={styles.tabIconWrap}>
+                    {getTabIconForKind(tab.kind, active, theme.accent)}
+                  </View>
                   <Text
                     style={[
                       styles.tabTitle,
@@ -333,11 +370,11 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
                   </Text>
                   {openTabs.length > 1 && (
                     <TouchableOpacity
-                      style={styles.tabCloseBtn}
+                      style={[styles.tabCloseBtn, { backgroundColor: active ? theme.accent + '20' : 'transparent' }]}
                       onPress={(e) => handleCloseTab(e, tab.id)}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <X size={12} color={active ? theme.accent : theme.muted} />
+                      <X size={11} color={active ? theme.accent : theme.muted} />
                     </TouchableOpacity>
                   )}
                 </TouchableOpacity>
@@ -351,7 +388,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityLabel="Open new file"
             >
-              <Plus size={14} color={theme.accent} />
+              <Plus size={13} color={theme.accent} />
               <Text style={[styles.newTabText, { color: theme.accent }]}>+ File</Text>
             </TouchableOpacity>
           </ScrollView>
@@ -655,38 +692,43 @@ const styles = StyleSheet.create({
   },
   tabBarContainer: {
     borderBottomWidth: 1,
-    paddingVertical: 4,
+    paddingVertical: 6,
     paddingHorizontal: 8,
   },
   tabScrollContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
+    paddingRight: 12,
   },
   tabItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
     borderWidth: 1,
-    maxWidth: 160,
+    maxWidth: 180,
+  },
+  tabIconWrap: {
+    marginRight: 6,
   },
   tabTitle: {
     fontSize: 12,
     marginRight: 4,
+    maxWidth: 110,
   },
   tabCloseBtn: {
-    padding: 2,
-    marginLeft: 2,
-    borderRadius: 4,
+    padding: 3,
+    marginLeft: 3,
+    borderRadius: 10,
   },
   newTabBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
     borderWidth: 1,
     gap: 4,
   },

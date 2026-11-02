@@ -30,6 +30,26 @@ export interface Bookmark {
   scroll?: number;
   snippet?: string;
   createdAt: number;
+  kind?: DocKind;
+  uri?: string;
+  size?: number;
+  mime?: string;
+  isDrive?: boolean;
+  driveFileId?: string;
+  base64Data?: string;
+}
+
+export interface AppActivity {
+  id: string;
+  type: 'open_file' | 'save_bookmark' | 'open_folder' | 'sync_drive' | 'save_link' | 'transfer';
+  title: string;
+  subtitle?: string;
+  docKind?: DocKind;
+  timestamp: number;
+  status: 'completed' | 'running' | 'failed';
+  docId?: string;
+  docUri?: string;
+  size?: number;
 }
 
 export interface SavedLink {

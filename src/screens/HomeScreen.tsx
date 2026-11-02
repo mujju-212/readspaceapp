@@ -32,7 +32,7 @@ import {
 import { Storage } from '../services/storage';
 import { pickDocuments } from '../services/picker';
 import { pickWorkspaceFolder, openFolderEntry, findFirstFileEntry } from '../services/folder';
-import { MobileDoc, ReaderSettings, SavedLink, UserAccount, WorkspaceFolder, DriveAccount } from '../types';
+import { MobileDoc, ReaderSettings, SavedLink, UserAccount, WorkspaceFolder, DriveAccount, Bookmark as BookmarkType } from '../types';
 import { THEMES } from '../theme/colors';
 import { AuthModal } from '../components/AuthModal';
 import { OpenDriveLinkModal } from '../components/OpenDriveLinkModal';
@@ -52,6 +52,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
   const [docs, setDocs] = useState<MobileDoc[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceFolder[]>([]);
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>([]);
+  const [bookmarks, setBookmarks] = useState<BookmarkType[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceFolder | null>(null);
   const [user, setUser] = useState<UserAccount | null>(null);
   const [drive, setDrive] = useState<DriveAccount | null>(null);
@@ -90,16 +91,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
       }
     }
 
-    const [list, wsList, links, storedUser, storedDrive] = await Promise.all([
+    const [list, wsList, links, storedUser, storedDrive, bms] = await Promise.all([
       Storage.getDocs(),
       Storage.getWorkspaces(),
       Storage.getSavedLinks(),
       Storage.getUserAccount(),
       Storage.getDriveAccount(),
+      Storage.getBookmarks(),
     ]);
     setDocs(list);
     setWorkspaces(wsList);
     setSavedLinks(links);
+    setBookmarks(bms);
     setUser(storedUser);
     setDrive(storedDrive);
     if (wsList.length > 0 && !activeWorkspace) {
@@ -348,18 +351,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
             </Text>
           </TouchableOpacity>
 
-          {/* 4. Saved Links */}
+          {/* 4. Saved Files & Links */}
           <TouchableOpacity
             style={[styles.qaCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
-            onPress={() => setShowSavedLinksModal(true)}
+            onPress={() => navigation.navigate('Library', { initialTab: 'saved' })}
             activeOpacity={0.7}
           >
             <View style={[styles.qaIconWrap, { backgroundColor: '#ec489918' }]}>
               <Bookmark size={20} color="#ec4899" />
             </View>
-            <Text style={[styles.qaTitle, { color: theme.text }]}>Saved Links</Text>
+            <Text style={[styles.qaTitle, { color: theme.text }]}>Saved</Text>
             <Text style={[styles.qaDesc, { color: theme.textMuted }]}>
-              {savedLinks.length > 0 ? `${savedLinks.length} item(s) in collection` : 'Personal link collection'}
+              {bookmarks.length + savedLinks.length > 0
+                ? `${bookmarks.length} saved file(s) · ${savedLinks.length} link(s)`
+                : 'Bookmarked files & links'}
             </Text>
           </TouchableOpacity>
 
@@ -473,45 +478,76 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
           </View>
         )}
 
-        {/* Saved Links Section (Always visible 1:1 with Web App) */}
+        {/* Saved Files & Links Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Bookmark size={16} color={theme.primary} style={{ marginRight: 6 }} />
-              <Text style={[styles.sectionTitle, { color: theme.text }]}>Saved Links</Text>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>Saved Files & Links</Text>
             </View>
-            <TouchableOpacity onPress={() => setShowSavedLinksModal(true)}>
+            <TouchableOpacity onPress={() => navigation.navigate('Library', { initialTab: 'saved' })}>
               <Text style={[styles.viewAllText, { color: theme.primary }]}>
-                {savedLinks.length > 0 ? `View All (${savedLinks.length})` : 'Open Panel'}
+                {bookmarks.length + savedLinks.length > 0 ? `View All (${bookmarks.length + savedLinks.length})` : 'View Saved'}
               </Text>
             </TouchableOpacity>
           </View>
 
-          {savedLinks.length === 0 ? (
+          {bookmarks.length === 0 && savedLinks.length === 0 ? (
             <View style={[styles.savedLinksEmptyCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
               <View style={styles.savedLinksEmptyLeft}>
                 <Text style={[styles.savedLinksEmptyTitle, { color: theme.text }]}>
-                  Personal Collection of Shared Files
+                  Your Saved Files & Links
                 </Text>
                 <Text style={[styles.savedLinksEmptySub, { color: theme.textMuted }]}>
-                  {user
-                    ? 'Paste a shared Drive URL to keep a reference in your account — never a duplicate copy.'
-                    : 'Sign in to sync your saved links collection across all your devices.'}
+                  Bookmark documents while reading, or save shared Google Drive links to access them here instantly.
                 </Text>
               </View>
               <TouchableOpacity
                 style={[styles.savedLinksEmptyBtn, { backgroundColor: theme.primary }]}
-                onPress={() => {
-                  setDriveLinkSaveMode(true);
-                  setShowDriveLinkModal(true);
-                }}
+                onPress={() => navigation.navigate('Library', { initialTab: 'saved' })}
               >
-                <Text style={styles.savedLinksEmptyBtnText}>+ Save Link</Text>
+                <Text style={styles.savedLinksEmptyBtnText}>Go to Saved</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.savedLinksRow}>
-              {savedLinks.slice(0, 6).map((l) => (
+              {bookmarks.slice(0, 5).map((bm) => (
+                <TouchableOpacity
+                  key={bm.id}
+                  style={[styles.savedLinkCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  onPress={async () => {
+                    const found = docs.find((d) => d.id === bm.docId || (bm.uri && d.uri === bm.uri));
+                    if (found) {
+                      handleOpenDoc(found);
+                    } else {
+                      handleOpenDoc({
+                        id: bm.docId,
+                        name: bm.title,
+                        uri: bm.uri || '',
+                        kind: bm.kind || 'text',
+                        mime: bm.mime,
+                        size: bm.size,
+                        isDrive: bm.isDrive,
+                        driveFileId: bm.driveFileId,
+                        base64Data: bm.base64Data,
+                        lastOpenedAt: Date.now(),
+                      });
+                    }
+                  }}
+                >
+                  <View style={[styles.badgePill, { backgroundColor: '#f59e0b18' }]}>
+                    <Text style={[styles.badgePillText, { color: '#f59e0b' }]}>{bm.kind ? bm.kind.toUpperCase() : 'SAVED'}</Text>
+                  </View>
+                  <Text style={[styles.savedLinkTitle, { color: theme.text }]} numberOfLines={1}>
+                    {bm.title}
+                  </Text>
+                  <Text style={[styles.savedLinkSub, { color: theme.textMuted }]}>
+                    Saved File
+                  </Text>
+                </TouchableOpacity>
+              ))}
+
+              {savedLinks.slice(0, 5).map((l) => (
                 <TouchableOpacity
                   key={l.id}
                   style={[styles.savedLinkCard, { backgroundColor: theme.surface, borderColor: theme.border }]}

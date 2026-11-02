@@ -90,6 +90,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
 }) => {
   const [filter, setFilter] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [treeVersion, setTreeVersion] = useState(0);
   const [openingUri, setOpeningUri] = useState<string | null>(null);
   const [expandingUri, setExpandingUri] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -156,9 +157,11 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
           };
         });
         entry.children = children;
+        setTreeVersion((v) => v + 1);
         if (workspace) {
           const updatedWs = { ...workspace, entries: [...(workspace.entries || [])] };
           onWorkspaceChanged(updatedWs);
+          void Storage.saveWorkspace(updatedWs);
         }
       } catch (e) {
         console.warn('Could not load subfolder files in explorer:', e);
@@ -168,9 +171,11 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
       try {
         const subEntries = await scanDirectoryUri(entry.uri, 0);
         entry.children = subEntries;
+        setTreeVersion((v) => v + 1);
         if (workspace) {
           const updatedWs = { ...workspace, entries: [...(workspace.entries || [])] };
           onWorkspaceChanged(updatedWs);
+          void Storage.saveWorkspace(updatedWs);
         }
       } catch (e) {
         console.warn('Could not load local subfolder in explorer:', e);

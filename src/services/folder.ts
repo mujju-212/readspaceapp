@@ -347,88 +347,158 @@ export function buildSafSubTreeUri(itemUri: string): string {
 }
 
 /**
- * Scan a directory URI safely on Android SAF (fast, non-blocking initial scan + on-demand expansion)
+ * Scan a directory URI safely across Android SAF, native file://, and web
  */
 export async function scanDirectoryUri(
   dirUri: string,
   maxDepth = 0,
   currentDepth = 0
 ): Promise<FolderEntry[]> {
-  if (!StorageAccessFramework) return [];
-  try {
-    const targetUri = buildSafSubTreeUri(dirUri);
-    const uris = await StorageAccessFramework.readDirectoryAsync(targetUri);
-    const results: FolderEntry[] = [];
-
-    for (const itemUri of uris) {
-      let decoded = decodeURIComponent(itemUri);
-      let name = decoded.split('/').pop() || decoded.split('%2F').pop() || 'Item';
-      if (name.includes(':')) {
-        name = name.split(':').pop() || name;
-      }
-
-      // Check whether this item is a recognized file type or a folder
-      const isFile = isFileName(name);
-      let isDirectory = !isFile;
-      let children: FolderEntry[] | undefined = undefined;
-
-      // Only attempt reading immediate children if it is a directory and currentDepth < maxDepth
-      if (isDirectory) {
-        if (currentDepth < maxDepth) {
-          try {
-            const subTreeUri = buildSafSubTreeUri(itemUri);
-            const subUris = await StorageAccessFramework.readDirectoryAsync(subTreeUri);
-            const isLoop =
-              subUris.length > 0 &&
-              (subUris.includes(itemUri) ||
-                subUris.includes(targetUri) ||
-                (uris.length > 0 && subUris.length === uris.length && subUris[0] === uris[0]));
-
-            if (isLoop) {
+  // 1. Standard file:// scheme (iOS or Android local filesystem)
+  if (dirUri.startsWith('file://')) {
+    try {
+      const names = await FileSystem.readDirectoryAsync(dirUri);
+      const results: FolderEntry[] = [];
+      const cleanDir = dirUri.endsWith('/') ? dirUri : `${dirUri}/`;
+      for (const name of names) {
+        if (name.startsWith('.') || name === 'Thumbs.db') continue;
+        const itemUri = `${cleanDir}${name}`;
+        let isDir = false;
+        try {
+          const info = await FileSystem.getInfoAsync(itemUri);
+          isDir = Boolean(info.isDirectory);
+        } catch {
+          isDir = !isFileName(name);
+        }
+        let children: FolderEntry[] | undefined = undefined;
+        if (isDir) {
+          if (currentDepth < maxDepth) {
+            try {
+              children = await scanDirectoryUri(itemUri, maxDepth, currentDepth + 1);
+            } catch {
               children = [];
-            } else {
-              children = subUris.map((u) => {
-                let d = decodeURIComponent(u);
-                let n = d.split('/').pop() || d.split('%2F').pop() || 'Item';
-                if (n.includes(':')) n = n.split(':').pop() || n;
-                const subIsFile = isFileName(n);
-                return {
-                  name: n,
-                  uri: u,
-                  isDirectory: !subIsFile,
-                  kind: subIsFile ? getKindFromExt(n) : undefined,
-                  children: !subIsFile ? [] : undefined,
-                };
-              });
             }
-          } catch {
-            // Keep as directory with empty children if not expandable or empty
-            children = [];
+          } else {
+            children = undefined;
           }
-        } else {
-          // Leave undefined so it can be dynamically expanded when tapped in tree
-          children = undefined;
+        }
+        results.push({
+          name,
+          uri: itemUri,
+          isDirectory: isDir,
+          kind: isDir ? undefined : getKindFromExt(name),
+          children,
+        });
+      }
+      return results.sort((a, b) => {
+        if (a.isDirectory && !b.isDirectory) return -1;
+        if (!a.isDirectory && b.isDirectory) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    } catch (e) {
+      console.warn('file:// directory scan error:', dirUri, e);
+      return [];
+    }
+  }
+
+  // 2. Android Storage Access Framework (SAF)
+  if (StorageAccessFramework) {
+    try {
+      let uris: string[] = [];
+      // First attempt: pass the directory URI directly (preserves parent tree authorization)
+      try {
+        uris = await StorageAccessFramework.readDirectoryAsync(dirUri);
+      } catch (errDirect) {
+        // Fallback: if dirUri is a sub-document URI, try transformed subTree URI
+        try {
+          const subTree = buildSafSubTreeUri(dirUri);
+          if (subTree !== dirUri) {
+            uris = await StorageAccessFramework.readDirectoryAsync(subTree);
+          } else {
+            throw errDirect;
+          }
+        } catch {
+          throw errDirect;
         }
       }
 
-      results.push({
-        name,
-        uri: itemUri,
-        isDirectory,
-        kind: isDirectory ? undefined : getKindFromExt(name),
-        children,
-      });
-    }
+      const results: FolderEntry[] = [];
 
-    return results.sort((a, b) => {
-      if (a.isDirectory && !b.isDirectory) return -1;
-      if (!a.isDirectory && b.isDirectory) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  } catch (err) {
-    console.warn('Failed to scan directory URI:', dirUri, err);
-    return [];
+      for (const itemUri of uris) {
+        let decoded = decodeURIComponent(itemUri);
+        let name = decoded.split('/').pop() || decoded.split('%2F').pop() || 'Item';
+        if (name.includes(':')) {
+          name = name.split(':').pop() || name;
+        }
+
+        const isFile = isFileName(name);
+        const isDirectory = !isFile;
+        let children: FolderEntry[] | undefined = undefined;
+
+        if (isDirectory) {
+          if (currentDepth < maxDepth) {
+            try {
+              let subUris: string[] = [];
+              try {
+                subUris = await StorageAccessFramework.readDirectoryAsync(itemUri);
+              } catch {
+                const subTree = buildSafSubTreeUri(itemUri);
+                if (subTree !== itemUri) {
+                  subUris = await StorageAccessFramework.readDirectoryAsync(subTree);
+                }
+              }
+              const isLoop =
+                subUris.length > 0 &&
+                (subUris.includes(itemUri) ||
+                  subUris.includes(dirUri) ||
+                  (uris.length > 0 && subUris.length === uris.length && subUris[0] === uris[0]));
+
+              if (isLoop) {
+                children = [];
+              } else {
+                children = subUris.map((u) => {
+                  let d = decodeURIComponent(u);
+                  let n = d.split('/').pop() || d.split('%2F').pop() || 'Item';
+                  if (n.includes(':')) n = n.split(':').pop() || n;
+                  const subIsFile = isFileName(n);
+                  return {
+                    name: n,
+                    uri: u,
+                    isDirectory: !subIsFile,
+                    kind: subIsFile ? getKindFromExt(n) : undefined,
+                    children: !subIsFile ? [] : undefined,
+                  };
+                });
+              }
+            } catch {
+              children = [];
+            }
+          } else {
+            children = undefined;
+          }
+        }
+
+        results.push({
+          name,
+          uri: itemUri,
+          isDirectory,
+          kind: isDirectory ? undefined : getKindFromExt(name),
+          children,
+        });
+      }
+
+      return results.sort((a, b) => {
+        if (a.isDirectory && !b.isDirectory) return -1;
+        if (!a.isDirectory && b.isDirectory) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    } catch (err) {
+      console.warn('Failed to scan directory URI:', dirUri, err);
+      return [];
+    }
   }
+
+  return [];
 }
 
 function countFiles(entries: FolderEntry[]): number {

@@ -1,9 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { MobileDoc, Bookmark, ReaderSettings, DriveAccount, UserAccount, SavedLink, WorkspaceFolder } from '../types';
+import { MobileDoc, Bookmark, ReaderSettings, DriveAccount, UserAccount, SavedLink, WorkspaceFolder, AppActivity } from '../types';
 
 const KEYS = {
   DOCS: 'rs_mobile_docs_v1',
   BOOKMARKS: 'rs_mobile_bookmarks_v1',
+  ACTIVITIES: 'rs_mobile_activities_v1',
   SETTINGS: 'rs_mobile_settings_v1',
   SERVER_URL: 'rs_mobile_server_url_v1',
   DRIVE_ACCOUNT: 'rs_mobile_drive_account_v1',
@@ -45,6 +46,16 @@ export const Storage = {
       docs.unshift(doc);
     }
     await AsyncStorage.setItem(KEYS.DOCS, JSON.stringify(docs.slice(0, 100)));
+    void this.addActivity({
+      type: 'open_file',
+      title: doc.name,
+      subtitle: (doc.kind ? doc.kind.toUpperCase() : 'DOC') + (doc.isDrive ? ' · Google Drive' : ' · Device File'),
+      docKind: doc.kind,
+      status: 'completed',
+      docId: doc.id,
+      docUri: doc.uri,
+      size: doc.size,
+    });
   },
 
   async removeDoc(id: string): Promise<void> {
@@ -63,7 +74,7 @@ export const Storage = {
     }
   },
 
-  // Bookmarks
+  // Bookmarks / Saved Files
   async getBookmarks(docId?: string): Promise<Bookmark[]> {
     try {
       const raw = await AsyncStorage.getItem(KEYS.BOOKMARKS);
@@ -76,14 +87,60 @@ export const Storage = {
 
   async addBookmark(bookmark: Bookmark): Promise<void> {
     const all = await this.getBookmarks();
-    all.unshift(bookmark);
-    await AsyncStorage.setItem(KEYS.BOOKMARKS, JSON.stringify(all));
+    const filtered = all.filter((b) => b.id !== bookmark.id && b.docId !== bookmark.docId);
+    filtered.unshift(bookmark);
+    await AsyncStorage.setItem(KEYS.BOOKMARKS, JSON.stringify(filtered.slice(0, 100)));
+    await this.addActivity({
+      type: 'save_bookmark',
+      title: bookmark.title,
+      subtitle: bookmark.isDrive ? 'Saved Drive file bookmark' : 'Saved local document bookmark',
+      docKind: bookmark.kind,
+      status: 'completed',
+      docId: bookmark.docId,
+      docUri: bookmark.uri,
+    });
   },
 
-  async removeBookmark(id: string): Promise<void> {
+  async removeBookmark(idOrDocId: string): Promise<void> {
     const all = await this.getBookmarks();
-    const filtered = all.filter((b) => b.id !== id);
+    const filtered = all.filter((b) => b.id !== idOrDocId && b.docId !== idOrDocId);
     await AsyncStorage.setItem(KEYS.BOOKMARKS, JSON.stringify(filtered));
+  },
+
+  // Activities (Real, live user actions feed)
+  async getActivities(): Promise<AppActivity[]> {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.ACTIVITIES);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  async addActivity(
+    activity: Omit<AppActivity, 'id' | 'timestamp'> & { timestamp?: number }
+  ): Promise<void> {
+    try {
+      const all = await this.getActivities();
+      const newAct: AppActivity = {
+        id: `act_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        timestamp: activity.timestamp || Date.now(),
+        ...activity,
+      };
+      // Keep most recent 80 activities, deduplicating identical consecutive open actions
+      if (all.length > 0 && all[0].title === newAct.title && all[0].type === newAct.type && Date.now() - all[0].timestamp < 60000) {
+        all[0] = newAct;
+      } else {
+        all.unshift(newAct);
+      }
+      await AsyncStorage.setItem(KEYS.ACTIVITIES, JSON.stringify(all.slice(0, 80)));
+    } catch {
+      // ignore
+    }
+  },
+
+  async clearActivities(): Promise<void> {
+    await AsyncStorage.removeItem(KEYS.ACTIVITIES);
   },
 
   // Saved Links
@@ -256,6 +313,7 @@ export const Storage = {
     await AsyncStorage.removeItem(KEYS.BOOKMARKS);
     await AsyncStorage.removeItem(KEYS.SAVED_LINKS);
     await AsyncStorage.removeItem(KEYS.WORKSPACES);
+    await AsyncStorage.removeItem(KEYS.ACTIVITIES);
   },
 };
 

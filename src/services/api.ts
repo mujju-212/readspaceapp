@@ -1,4 +1,5 @@
 import { Platform, Linking } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { Storage } from './storage';
 import { UserAccount, DriveAccount } from '../types';
 
@@ -258,7 +259,7 @@ export const Api = {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       returnTo = window.location.origin;
     } else {
-      returnTo = 'com.readspace.app://auth';
+      returnTo = 'readspace://auth';
     }
     return `${base}/api/auth/google/start?drive=${withDrive ? '1' : '0'}&returnTo=${encodeURIComponent(returnTo)}`;
   },
@@ -318,7 +319,32 @@ export const Api = {
       // If popup was blocked by browser, fallback to standard redirect
       window.location.href = url;
     } else {
-      await Linking.openURL(url);
+      try {
+        const redirectUrl = 'readspace://auth';
+        const result = await WebBrowser.openAuthSessionAsync(url, redirectUrl);
+        if (result.type === 'success' && result.url) {
+          let query = '';
+          if (result.url.includes('?')) query = result.url.split('?')[1];
+          else if (result.url.includes('#')) query = result.url.split('#')[1];
+
+          const params = new URLSearchParams(query);
+          const token = params.get('token');
+          const drive = params.get('drive') === '1' || params.get('drive_connected') === '1';
+
+          if (token) {
+            await Storage.saveSessionToken(token);
+          }
+          if (drive) {
+            await Storage.saveDriveAccount({ connected: true });
+          }
+          const synced = await this.syncSession();
+          if (onSuccess) onSuccess(synced);
+          return;
+        }
+      } catch (err) {
+        console.warn('WebBrowser auth session error, falling back to Linking:', err);
+        await Linking.openURL(url);
+      }
     }
   },
 

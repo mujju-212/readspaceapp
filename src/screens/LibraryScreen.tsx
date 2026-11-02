@@ -28,6 +28,7 @@ import {
   FileCode,
   Music,
   Video,
+  Image as ImageIcon,
   FileSpreadsheet,
   Presentation,
   Link2,
@@ -40,7 +41,7 @@ import { pickDocuments } from '../services/picker';
 import { pickWorkspaceFolder, openFolderEntry, findFirstFileEntry, createDriveWorkspace } from '../services/folder';
 import { openDriveResource } from '../services/gdrive';
 import { Api } from '../services/api';
-import { MobileDoc, ReaderSettings, SavedLink, WorkspaceFolder } from '../types';
+import { MobileDoc, ReaderSettings, SavedLink, WorkspaceFolder, Bookmark as BookmarkType } from '../types';
 import { THEMES } from '../theme/colors';
 import { OpenDriveLinkModal } from '../components/OpenDriveLinkModal';
 import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
@@ -54,8 +55,10 @@ interface LibraryScreenProps {
 export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route, settings }) => {
   const [tab, setTab] = useState<'local' | 'saved' | 'drive'>(route.params?.initialTab || 'local');
   const [viewMode, setViewMode] = useState<'tree' | 'recent'>('tree');
+  const [savedSubTab, setSavedSubTab] = useState<'files' | 'links'>('files');
   const [docs, setDocs] = useState<MobileDoc[]>([]);
   const [savedLinks, setSavedLinks] = useState<SavedLink[]>([]);
+  const [bookmarks, setBookmarks] = useState<BookmarkType[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceFolder[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceFolder | null>(null);
 
@@ -80,15 +83,17 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
 
   const loadData = async (folderId?: string, force = false) => {
     const targetFolder = folderId || driveFolderId;
-    const [localDocs, links, wsList, status] = await Promise.all([
+    const [localDocs, links, wsList, status, bms] = await Promise.all([
       Storage.getDocs(),
       Storage.getSavedLinks(),
       Storage.getWorkspaces(),
       Api.getDriveStatus(),
+      Storage.getBookmarks(),
     ]);
     setDocs(localDocs);
     setSavedLinks(links);
     setWorkspaces(wsList);
+    setBookmarks(bms);
     if (wsList.length > 0 && !activeWorkspace) {
       setActiveWorkspace(wsList[0]);
     }
@@ -188,6 +193,43 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
         style: 'destructive',
         onPress: async () => {
           await Storage.removeSavedLink(link.id);
+          await loadData();
+        },
+      },
+    ]);
+  };
+
+  const handleOpenBookmark = async (bm: BookmarkType) => {
+    const docs = await Storage.getDocs();
+    const found = docs.find((d) => d.id === bm.docId || (bm.uri && d.uri === bm.uri));
+    if (found) {
+      handleOpenDoc(found);
+    } else {
+      const fallbackDoc: MobileDoc = {
+        id: bm.docId,
+        name: bm.title,
+        uri: bm.uri || '',
+        kind: bm.kind || 'text',
+        mime: bm.mime,
+        size: bm.size,
+        isDrive: bm.isDrive,
+        driveFileId: bm.driveFileId,
+        base64Data: bm.base64Data,
+        lastOpenedAt: Date.now(),
+      };
+      await Storage.saveDoc(fallbackDoc);
+      handleOpenDoc(fallbackDoc);
+    }
+  };
+
+  const handleDeleteBookmark = (bm: BookmarkType) => {
+    Alert.alert('Remove Bookmark', `Remove "${bm.title}" from saved files?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          await Storage.removeBookmark(bm.id);
           await loadData();
         },
       },
@@ -373,6 +415,13 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
     });
   }, [savedLinks, search]);
 
+  // Filter Bookmarks / Saved Files
+  const filteredBookmarks = useMemo(() => {
+    return bookmarks.filter((bm) => {
+      return !search || bm.title.toLowerCase().includes(search.toLowerCase());
+    });
+  }, [bookmarks, search]);
+
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safeArea, { backgroundColor: theme.bg }]}>
       <View style={styles.container}>
@@ -455,7 +504,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
               style={[styles.segmentText, { color: tab === 'saved' ? '#ffffff' : theme.textSecondary }]}
               numberOfLines={1}
             >
-              {savedLinks.length > 0 ? `Saved (${savedLinks.length})` : 'Saved'}
+              {bookmarks.length + savedLinks.length > 0
+                ? `Saved (${bookmarks.length + savedLinks.length})`
+                : 'Saved'}
             </Text>
           </TouchableOpacity>
 
@@ -666,58 +717,136 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
           </ScrollView>
         )}
 
-        {/* TAB 2: SAVED LINKS */}
+        {/* TAB 2: SAVED (FILES & LINKS) */}
         {tab === 'saved' && (
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContainer}>
-            {filteredSavedLinks.length === 0 ? (
-              <View style={[styles.emptyBox, { borderColor: theme.border }]}>
-                <Bookmark size={36} color={theme.textMuted} />
-                <Text style={[styles.emptyTitle, { color: theme.text }]}>No Saved Links</Text>
-                <Text style={[styles.emptyDesc, { color: theme.textMuted }]}>
-                  Bookmark references to shared Google Drive files or folders into collections.
+            {/* Saved Sub-Navigation Tabs */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TouchableOpacity
+                style={[
+                  styles.viewModeBtn,
+                  {
+                    backgroundColor: savedSubTab === 'files' ? theme.primary : theme.surface,
+                    borderColor: savedSubTab === 'files' ? theme.primary : theme.border,
+                  },
+                ]}
+                onPress={() => setSavedSubTab('files')}
+              >
+                <FileText size={13} color={savedSubTab === 'files' ? '#ffffff' : theme.textSecondary} />
+                <Text style={[styles.viewModeText, { color: savedSubTab === 'files' ? '#ffffff' : theme.textSecondary }]}>
+                  Saved Files ({bookmarks.length})
                 </Text>
-                <TouchableOpacity
-                  style={[styles.emptyBtn, { backgroundColor: theme.primary, marginTop: 12 }]}
-                  onPress={() => {
-                    setDriveLinkSaveMode(true);
-                    setShowDriveLinkModal(true);
-                  }}
-                >
-                  <Plus size={15} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.emptyBtnText}>Save a Link</Text>
-                </TouchableOpacity>
-              </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.viewModeBtn,
+                  {
+                    backgroundColor: savedSubTab === 'links' ? theme.primary : theme.surface,
+                    borderColor: savedSubTab === 'links' ? theme.primary : theme.border,
+                  },
+                ]}
+                onPress={() => setSavedSubTab('links')}
+              >
+                <Bookmark size={13} color={savedSubTab === 'links' ? '#ffffff' : theme.textSecondary} />
+                <Text style={[styles.viewModeText, { color: savedSubTab === 'links' ? '#ffffff' : theme.textSecondary }]}>
+                  Saved Links ({savedLinks.length})
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {savedSubTab === 'files' ? (
+              filteredBookmarks.length === 0 ? (
+                <View style={[styles.emptyBox, { borderColor: theme.border }]}>
+                  <Bookmark size={36} color={theme.textMuted} />
+                  <Text style={[styles.emptyTitle, { color: theme.text }]}>No Saved Files Yet</Text>
+                  <Text style={[styles.emptyDesc, { color: theme.textMuted }]}>
+                    When viewing any document, tap the Bookmark / Save icon in the top header to save it here for fast one-tap access.
+                  </Text>
+                </View>
+              ) : (
+                filteredBookmarks.map((bm) => (
+                  <View
+                    key={bm.id}
+                    style={[styles.fileCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  >
+                    <TouchableOpacity
+                      style={styles.cardMain}
+                      onPress={() => handleOpenBookmark(bm)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.kindBadge, { backgroundColor: '#f59e0b18' }]}>
+                        <Bookmark size={18} color="#f59e0b" />
+                      </View>
+                      <View style={styles.cardInfo}>
+                        <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
+                          {bm.title}
+                        </Text>
+                        <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
+                          {bm.kind ? bm.kind.toUpperCase() : 'DOCUMENT'} · {bm.isDrive ? 'Google Drive' : 'Local File'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deleteBtn}
+                      onPress={() => handleDeleteBookmark(bm)}
+                    >
+                      <Trash2 size={16} color={theme.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )
             ) : (
-              filteredSavedLinks.map((link) => (
-                <View
-                  key={link.id}
-                  style={[styles.fileCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
-                >
+              filteredSavedLinks.length === 0 ? (
+                <View style={[styles.emptyBox, { borderColor: theme.border }]}>
+                  <Bookmark size={36} color={theme.textMuted} />
+                  <Text style={[styles.emptyTitle, { color: theme.text }]}>No Saved Links</Text>
+                  <Text style={[styles.emptyDesc, { color: theme.textMuted }]}>
+                    Bookmark references to shared Google Drive files or folders into collections.
+                  </Text>
                   <TouchableOpacity
-                    style={styles.cardMain}
-                    onPress={() => handleOpenSavedLink(link)}
-                    activeOpacity={0.7}
+                    style={[styles.emptyBtn, { backgroundColor: theme.primary, marginTop: 12 }]}
+                    onPress={() => {
+                      setDriveLinkSaveMode(true);
+                      setShowDriveLinkModal(true);
+                    }}
                   >
-                    <View style={[styles.kindBadge, { backgroundColor: '#8b5cf618' }]}>
-                      <Bookmark size={18} color="#8b5cf6" />
-                    </View>
-                    <View style={styles.cardInfo}>
-                      <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
-                        {link.title}
-                      </Text>
-                      <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
-                        Collection: {link.collection || 'General'} · Google {link.hint.toUpperCase()}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.deleteBtn}
-                    onPress={() => handleDeleteSavedLink(link)}
-                  >
-                    <Trash2 size={16} color={theme.textMuted} />
+                    <Plus size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.emptyBtnText}>Save a Link</Text>
                   </TouchableOpacity>
                 </View>
-              ))
+              ) : (
+                filteredSavedLinks.map((link) => (
+                  <View
+                    key={link.id}
+                    style={[styles.fileCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  >
+                    <TouchableOpacity
+                      style={styles.cardMain}
+                      onPress={() => handleOpenSavedLink(link)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.kindBadge, { backgroundColor: '#8b5cf618' }]}>
+                        <Bookmark size={18} color="#8b5cf6" />
+                      </View>
+                      <View style={styles.cardInfo}>
+                        <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
+                          {link.title}
+                        </Text>
+                        <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
+                          Collection: {link.collection || 'General'} · Google {link.hint.toUpperCase()}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deleteBtn}
+                      onPress={() => handleDeleteSavedLink(link)}
+                    >
+                      <Trash2 size={16} color={theme.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )
             )}
           </ScrollView>
         )}
