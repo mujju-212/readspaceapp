@@ -33,7 +33,15 @@ import {
   Image as ImageIcon,
 } from 'lucide-react-native';
 import { FolderEntry, MobileDoc, WorkspaceFolder, DriveAccount, UserAccount, DocKind } from '../types';
-import { openFolderEntry, pickWorkspaceFolder, checkWorkspaceNeedReconnect, scanDirectoryUri, grantSubfolderPermission } from '../services/folder';
+import {
+  openFolderEntry,
+  pickWorkspaceFolder,
+  checkWorkspaceNeedReconnect,
+  scanDirectoryUri,
+  grantSubfolderPermission,
+  hasAllFilesAccess,
+  requestAllFilesAccess,
+} from '../services/folder';
 import { Storage } from '../services/storage';
 import { Api } from '../services/api';
 import { ThemeColors } from '../theme/colors';
@@ -219,38 +227,47 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
         return;
       }
 
-      // If empty on Android SAF, offer direct sub-folder permission grant
+      // If empty on Android, check if All Files Access is needed
       if (Platform.OS === 'android' && !entry.isDrive) {
-        Alert.alert(
-          `Open "${entry.name}"`,
-          'Android requires storage access permission to browse files in this sub-folder. Would you like to select and open this subfolder?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Grant Permission',
-              onPress: async () => {
-                setExpandingUri(entry.uri);
-                try {
-                  const res = await grantSubfolderPermission(entry.uri);
-                  if (res && res.entries) {
-                    entry.uri = res.directoryUri;
-                    attachChildren(entry, res.entries);
-                    setExpanded((prev) => ({
-                      ...prev,
-                      [entry.uri]: true,
-                      [res.directoryUri]: true,
-                    }));
-                  }
-                } catch (err) {
-                  console.warn('Subfolder permission grant failed:', err);
-                } finally {
-                  setExpandingUri(null);
-                }
+        const hasAccess = await hasAllFilesAccess();
+        if (!hasAccess) {
+          Alert.alert(
+            'Full Storage Access',
+            'To open all folders and subfolders without permission prompts, enable "Allow access to manage all files" for ReadSpace in Settings.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Enable in Settings',
+                onPress: async () => {
+                  await requestAllFilesAccess();
+                },
               },
-            },
-          ]
-        );
-        return;
+              {
+                text: 'Select Subfolder',
+                onPress: async () => {
+                  setExpandingUri(entry.uri);
+                  try {
+                    const res = await grantSubfolderPermission(entry.uri);
+                    if (res && res.entries) {
+                      entry.uri = res.directoryUri;
+                      attachChildren(entry, res.entries);
+                      setExpanded((prev) => ({
+                        ...prev,
+                        [entry.uri]: true,
+                        [res.directoryUri]: true,
+                      }));
+                    }
+                  } catch (err) {
+                    console.warn('Subfolder permission grant failed:', err);
+                  } finally {
+                    setExpandingUri(null);
+                  }
+                },
+              },
+            ]
+          );
+          return;
+        }
       }
 
       attachChildren(entry, []);
@@ -258,44 +275,53 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
     } catch (e: any) {
       console.warn('Retry failed for subfolder in explorer:', entry.uri, e);
       if (Platform.OS === 'android' && !entry.isDrive) {
-        Alert.alert(
-          `Open "${entry.name}"`,
-          'Android requires storage access permission to browse files in this sub-folder. Would you like to select and open this subfolder?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Grant Permission',
-              onPress: async () => {
-                setExpandingUri(entry.uri);
-                try {
-                  const res = await grantSubfolderPermission(entry.uri);
-                  if (res && res.entries) {
-                    entry.uri = res.directoryUri;
-                    attachChildren(entry, res.entries);
-                    setExpanded((prev) => ({
-                      ...prev,
-                      [entry.uri]: true,
-                      [res.directoryUri]: true,
-                    }));
-                  }
-                } catch (err) {
-                  console.warn('Subfolder permission grant failed:', err);
-                } finally {
-                  setExpandingUri(null);
-                }
+        const hasAccess = await hasAllFilesAccess();
+        if (!hasAccess) {
+          Alert.alert(
+            'Full Storage Access',
+            'To open all folders and subfolders without permission prompts, enable "Allow access to manage all files" for ReadSpace in Settings.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Enable in Settings',
+                onPress: async () => {
+                  await requestAllFilesAccess();
+                },
               },
-            },
-          ]
-        );
-      } else {
-        setFailedUri(entry.uri);
-        Alert.alert(
-          'Cannot Open Sub-folder',
-          entry.isDrive || entry.uri?.startsWith('gdrive://')
-            ? 'Google Drive returned an error for this folder. Check your connection and Drive authorization, then retry.'
-            : 'This folder is empty or inaccessible.'
-        );
+              {
+                text: 'Select Subfolder',
+                onPress: async () => {
+                  setExpandingUri(entry.uri);
+                  try {
+                    const res = await grantSubfolderPermission(entry.uri);
+                    if (res && res.entries) {
+                      entry.uri = res.directoryUri;
+                      attachChildren(entry, res.entries);
+                      setExpanded((prev) => ({
+                        ...prev,
+                        [entry.uri]: true,
+                        [res.directoryUri]: true,
+                      }));
+                    }
+                  } catch (err) {
+                    console.warn('Subfolder permission grant failed:', err);
+                  } finally {
+                    setExpandingUri(null);
+                  }
+                },
+              },
+            ]
+          );
+          return;
+        }
       }
+      setFailedUri(entry.uri);
+      Alert.alert(
+        'Cannot Open Sub-folder',
+        entry.isDrive || entry.uri?.startsWith('gdrive://')
+          ? 'Google Drive returned an error for this folder. Check your connection and Drive authorization, then retry.'
+          : 'This folder is empty or inaccessible.'
+      );
     } finally {
       setExpandingUri(null);
     }

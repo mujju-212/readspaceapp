@@ -1,12 +1,90 @@
 import * as FileSystem from 'expo-file-system';
 import * as DocumentPicker from 'expo-document-picker';
-import { Platform } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 import { DocKind, FolderEntry, MobileDoc, WorkspaceFolder } from '../types';
 import { Storage } from './storage';
 import { Api } from './api';
 import { getWorkspaceBlob, saveAllWorkspaceFiles, hasWorkspaceBlobs } from './webIdb';
 
 const { StorageAccessFramework } = FileSystem;
+
+/**
+ * Check if the app has direct "All Files Access" to device storage.
+ * On Android 11+ (API 30+), this corresponds to MANAGE_EXTERNAL_STORAGE.
+ */
+export async function hasAllFilesAccess(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  try {
+    const root = 'file:///storage/emulated/0';
+    const info = await FileSystem.getInfoAsync(root);
+    if (!info.exists) return false;
+    const testList = await FileSystem.readDirectoryAsync(root);
+    return Array.isArray(testList);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Request "All Files Access" / Manage Storage for ReadSpace with one toggle in Settings.
+ */
+export async function requestAllFilesAccess(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  try {
+    // 1. App-specific All Files Access toggle in Android system settings
+    try {
+      await Linking.sendIntent('android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION', [
+        { key: 'package', value: 'package:com.readspace.app' },
+      ]);
+      return true;
+    } catch {}
+
+    // 2. Global All Files Access settings list
+    try {
+      await Linking.sendIntent('android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION');
+      return true;
+    } catch {}
+
+    // 3. Fallback to app settings
+    await Linking.openSettings();
+    return true;
+  } catch (e) {
+    console.warn('Could not launch All Files Access intent:', e);
+    return false;
+  }
+}
+
+/**
+ * Convert Android SAF content:// URI (tree or document) to a real direct file:// path.
+ * e.g. content://com.android.externalstorage.documents/tree/primary%3ADocuments%2Fiitm%20bs%2Fpdsa
+ *      -> file:///storage/emulated/0/Documents/iitm bs/pdsa
+ */
+export function safUriToFilePath(uri: string): string | null {
+  if (!uri) return null;
+  if (uri.startsWith('file://')) return uri;
+  try {
+    const decoded = decodeURIComponent(uri);
+    let target = decoded;
+    if (decoded.includes('/document/')) {
+      target = decoded.split('/document/').pop() || decoded;
+    } else if (decoded.includes('/tree/')) {
+      target = decoded.split('/tree/').pop() || decoded;
+    }
+
+    const colonIdx = target.indexOf(':');
+    if (colonIdx !== -1) {
+      const volume = target.substring(0, colonIdx);
+      const relPath = target.substring(colonIdx + 1);
+      const basePath = volume.toLowerCase() === 'primary' ? '/storage/emulated/0' : `/storage/${volume}`;
+      const cleanRel = relPath.replace(/^\/+/, '');
+      const fullPath = cleanRel ? `${basePath}/${cleanRel}` : basePath;
+      return `file://${fullPath}`;
+    }
+  } catch (err) {
+    console.warn('safUriToFilePath error:', err);
+  }
+  return null;
+}
 
 const KNOWN_FILE_EXTENSIONS = new Set([
   'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'txt', 'md', 'markdown', 'html', 'htm',
@@ -121,45 +199,80 @@ export async function pickWorkspaceFolder(): Promise<WorkspaceFolder | null> {
     return pickWorkspaceFolderWeb();
   }
 
-  // 2. ANDROID NATIVE STORAGE ACCESS FRAMEWORK (SAF)
-  if (Platform.OS === 'android' && StorageAccessFramework) {
-    try {
-      const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
-      if (!permissions || !permissions.granted) {
-        return null; // user dismissed or denied permission
-      }
-
-      const dirUri = permissions.directoryUri;
-      let decodedName = 'Folder';
-      try {
-        const lastPart = dirUri.split('%3A').pop() || dirUri.split('%2F').pop() || '';
-        decodedName = decodeURIComponent(lastPart).replace(/_/g, ' ') || 'Local Folder';
-      } catch {
-        decodedName = 'Local Folder';
-      }
-
-      // Read top-level items
-      const entries = await scanDirectoryUri(dirUri);
-      const ws: WorkspaceFolder = {
-        id: `folder_${Date.now()}`,
-        name: decodedName,
-        uri: dirUri,
-        addedAt: Date.now(),
-        fileCount: countFiles(entries),
-        entries,
-      };
-
-      await Storage.saveWorkspace(ws);
-      void Storage.addActivity({
-        type: 'open_folder',
-        title: ws.name,
-        subtitle: 'Local folder opened',
-        status: 'completed',
+  // 2. ANDROID NATIVE STORAGE ACCESS
+  if (Platform.OS === 'android') {
+    // If All Files Access is not yet granted, guide user to enable it for seamless sub-folder access
+    const hasAccess = await hasAllFilesAccess();
+    if (!hasAccess) {
+      await new Promise<void>((resolve) => {
+        Alert.alert(
+          'Enable Storage Access',
+          'To open folders and all nested sub-folders seamlessly without repeated permission prompts, enable "Allow access to manage all files" for ReadSpace in Settings.',
+          [
+            { text: 'Skip for Now', style: 'cancel', onPress: () => resolve() },
+            {
+              text: 'Enable in Settings',
+              onPress: async () => {
+                await requestAllFilesAccess();
+                resolve();
+              },
+            },
+          ]
+        );
       });
-      return ws;
-    } catch (err: any) {
-      console.warn('Android SAF directory error:', err);
-      throw new Error(`Failed to access folder on Android: ${err?.message || err}`);
+    }
+
+    if (StorageAccessFramework) {
+      try {
+        const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+        if (!permissions || !permissions.granted || !permissions.directoryUri) {
+          return null; // user dismissed or denied permission
+        }
+
+        const dirUri = permissions.directoryUri;
+        let decodedName = 'Folder';
+        try {
+          const lastPart = dirUri.split('%3A').pop() || dirUri.split('%2F').pop() || '';
+          decodedName = decodeURIComponent(lastPart).replace(/_/g, ' ') || 'Local Folder';
+        } catch {
+          decodedName = 'Local Folder';
+        }
+
+        // Check if direct file:// path can be used (bypasses SAF subfolder restrictions entirely!)
+        const directPath = safUriToFilePath(dirUri);
+        let effectiveUri = dirUri;
+        if (directPath) {
+          try {
+            const check = await FileSystem.getInfoAsync(directPath);
+            if (check.exists && check.isDirectory) {
+              effectiveUri = directPath;
+            }
+          } catch {}
+        }
+
+        // Read top-level items
+        const entries = await scanDirectoryUri(effectiveUri);
+        const ws: WorkspaceFolder = {
+          id: `folder_${Date.now()}`,
+          name: decodedName,
+          uri: effectiveUri,
+          addedAt: Date.now(),
+          fileCount: countFiles(entries),
+          entries,
+        };
+
+        await Storage.saveWorkspace(ws);
+        void Storage.addActivity({
+          type: 'open_folder',
+          title: ws.name,
+          subtitle: 'Local folder opened',
+          status: 'completed',
+        });
+        return ws;
+      } catch (err: any) {
+        console.warn('Android SAF directory error:', err);
+        throw new Error(`Failed to access folder on Android: ${err?.message || err}`);
+      }
     }
   }
 
@@ -427,6 +540,19 @@ export async function scanDirectoryUri(
   maxDepth = 0,
   currentDepth = 0
 ): Promise<FolderEntry[]> {
+  // 0. Auto-upgrade Android content:// URI to direct file:// if direct storage access is available
+  if (Platform.OS === 'android' && dirUri.startsWith('content://')) {
+    const directPath = safUriToFilePath(dirUri);
+    if (directPath) {
+      try {
+        const info = await FileSystem.getInfoAsync(directPath);
+        if (info.exists && info.isDirectory) {
+          return scanDirectoryUri(directPath, maxDepth, currentDepth);
+        }
+      } catch {}
+    }
+  }
+
   // 1. Standard file:// scheme (iOS or Android local filesystem)
   if (dirUri.startsWith('file://')) {
     try {
@@ -490,9 +616,12 @@ export async function scanDirectoryUri(
         const isFile = isFileName(name);
         const isDirectory = !isFile;
 
+        // Auto-resolve item to direct file:// if storage access is available
+        const directItem = safUriToFilePath(itemUri);
+
         results.push({
           name,
-          uri: itemUri,
+          uri: directItem || itemUri,
           isDirectory,
           kind: isDirectory ? undefined : getKindFromExt(name),
           // Nested contents are scanned lazily on expand (see FolderExplorerModal),
@@ -701,15 +830,28 @@ export async function openFolderEntry(entry: FolderEntry): Promise<MobileDoc> {
       }
     } else if (kind === 'image' && (Platform.OS as string) !== 'web' && entry.uri) {
       // Direct native streaming: avoid reading multi-megabyte base64 strings into JS memory
+      const direct = safUriToFilePath(entry.uri);
+      if (direct) activeUri = direct;
       base64Data = undefined;
-    } else if (entry.uri.startsWith('content://') && StorageAccessFramework) {
-      base64Data = await StorageAccessFramework.readAsStringAsync(entry.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
     } else {
-      base64Data = await FileSystem.readAsStringAsync(entry.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      let readUri = entry.uri;
+      const direct = safUriToFilePath(entry.uri);
+      if (direct) {
+        try {
+          const info = await FileSystem.getInfoAsync(direct);
+          if (info.exists) readUri = direct;
+        } catch {}
+      }
+
+      if (readUri.startsWith('content://') && StorageAccessFramework) {
+        base64Data = await StorageAccessFramework.readAsStringAsync(readUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      } else {
+        base64Data = await FileSystem.readAsStringAsync(readUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
     }
   } catch (e) {
     console.warn('Could not read base64 data for entry:', entry.name, e);

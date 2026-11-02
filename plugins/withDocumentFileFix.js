@@ -1,18 +1,50 @@
-const { withProjectBuildGradle } = require('@expo/config-plugins');
+const { withProjectBuildGradle, withAndroidManifest } = require('@expo/config-plugins');
 
 /**
- * Expo Config Plugin to force Android to use androidx.documentfile:documentfile:1.0.1+
- * In 1.0.0, DocumentFile.fromTreeUri has a bug where it always resolves back to the
- * root tree URI and cannot read subdirectories under a granted SAF tree.
- * Version 1.0.1+ fixes this behavior.
+ * Expo Config Plugin for ReadSpace storage:
+ * 1. Forces Android to use androidx.documentfile:documentfile:1.0.1+
+ * 2. Injects MANAGE_EXTERNAL_STORAGE and storage permissions in AndroidManifest.xml
+ * 3. Sets requestLegacyExternalStorage on <application>
  */
 function withDocumentFileFix(config) {
-  return withProjectBuildGradle(config, (config) => {
-    if (config.modResults.language === 'groovy') {
-      config.modResults.contents = addResolutionStrategy(config.modResults.contents);
+  config = withProjectBuildGradle(config, (cfg) => {
+    if (cfg.modResults.language === 'groovy') {
+      cfg.modResults.contents = addResolutionStrategy(cfg.modResults.contents);
     }
-    return config;
+    return cfg;
   });
+
+  config = withAndroidManifest(config, (cfg) => {
+    const androidManifest = cfg.modResults.manifest;
+    if (!androidManifest['uses-permission']) {
+      androidManifest['uses-permission'] = [];
+    }
+
+    const permissions = [
+      'android.permission.MANAGE_EXTERNAL_STORAGE',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+    ];
+
+    for (const perm of permissions) {
+      const exists = androidManifest['uses-permission'].some(
+        (p) => p.$ && p.$['android:name'] === perm
+      );
+      if (!exists) {
+        androidManifest['uses-permission'].push({
+          $: { 'android:name': perm },
+        });
+      }
+    }
+
+    if (androidManifest.application && androidManifest.application[0]) {
+      androidManifest.application[0].$['android:requestLegacyExternalStorage'] = 'true';
+    }
+
+    return cfg;
+  });
+
+  return config;
 }
 
 function addResolutionStrategy(buildGradle) {
