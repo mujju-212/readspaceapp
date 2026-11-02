@@ -31,6 +31,7 @@ import {
   CloudUpload,
   Cloud,
   Image as ImageIcon,
+  Trash2,
 } from 'lucide-react-native';
 import { FolderEntry, MobileDoc, WorkspaceFolder, DriveAccount, UserAccount, DocKind } from '../types';
 import {
@@ -413,6 +414,32 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
     }
   };
 
+  const handleRemoveWorkspace = (targetWs?: WorkspaceFolder) => {
+    const ws = targetWs || workspace;
+    if (!ws) return;
+    Alert.alert(
+      'Remove Workspace Folder',
+      `Remove "${ws.name}" from your saved workspaces? (Files on your device will remain intact)`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            await Storage.removeWorkspace(ws.id);
+            const remaining = await Storage.getWorkspaces();
+            setAllWorkspaces(remaining);
+            if (remaining.length > 0) {
+              onWorkspaceChanged(remaining[0]);
+            } else {
+              onClose?.();
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleOpenFile = async (entry: FolderEntry) => {
     setOpeningUri(entry.uri);
     try {
@@ -645,6 +672,15 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
                 : 'Folder view'}
             </Text>
           </View>
+          {workspace && (
+            <TouchableOpacity
+              style={[styles.iconBtn, { marginLeft: 6 }]}
+              onPress={() => handleRemoveWorkspace()}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Trash2 size={15} color="#ef4444" />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Reconnect Banner when session expired */}
@@ -678,6 +714,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
                     },
                   ]}
                   onPress={() => onWorkspaceChanged(ws)}
+                  onLongPress={() => handleRemoveWorkspace(ws)}
                 >
                   <Folder size={11} color={isActive ? theme.primary : theme.textMuted} style={{ marginRight: 4 }} />
                   <Text

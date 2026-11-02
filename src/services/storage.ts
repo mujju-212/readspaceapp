@@ -98,6 +98,10 @@ export const Storage = {
     await AsyncStorage.setItem(KEYS.DOCS, JSON.stringify(filtered));
   },
 
+  async clearAllDocs(): Promise<void> {
+    await AsyncStorage.removeItem(KEYS.DOCS);
+  },
+
   async updatePosition(id: string, position: MobileDoc['position']): Promise<void> {
     const docs = await this.getDocs();
     const docIndex = docs.findIndex((d) => d.id === id);
@@ -271,6 +275,10 @@ export const Storage = {
     const all = await this.getWorkspaces();
     const filtered = all.filter((w) => w.id !== id);
     await AsyncStorage.setItem(KEYS.WORKSPACES, JSON.stringify(filtered));
+  },
+
+  async clearAllWorkspaces(): Promise<void> {
+    await AsyncStorage.removeItem(KEYS.WORKSPACES);
   },
 
   // Google Drive API Key

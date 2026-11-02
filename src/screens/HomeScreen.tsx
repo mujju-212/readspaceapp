@@ -29,6 +29,7 @@ import {
   ExternalLink,
   ChevronRight,
   Folder,
+  X,
 } from 'lucide-react-native';
 import { Storage } from '../services/storage';
 import { useSessionVersion } from '../services/sessionBus';
@@ -242,6 +243,56 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
         style: 'destructive',
         onPress: async () => {
           await Storage.removeDoc(id);
+          await loadData();
+        },
+      },
+    ]);
+  };
+
+  const handleDeleteWorkspace = async (id: string, name: string) => {
+    Alert.alert(
+      'Remove Folder',
+      `Remove "${name}" from your recent workspaces? (Files on your device will not be deleted)`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            await Storage.removeWorkspace(id);
+            if (activeWorkspace?.id === id) {
+              setActiveWorkspace(null);
+            }
+            await loadData();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearAllWorkspaces = () => {
+    Alert.alert('Clear Recent Folders', 'Remove all recent folders from this list?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Clear All',
+        style: 'destructive',
+        onPress: async () => {
+          await Storage.clearAllWorkspaces();
+          setActiveWorkspace(null);
+          await loadData();
+        },
+      },
+    ]);
+  };
+
+  const handleClearAllDocs = () => {
+    Alert.alert('Clear Recent Items', 'Remove all recent documents from this device history?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Clear All',
+        style: 'destructive',
+        onPress: async () => {
+          await Storage.clearAllDocs();
           await loadData();
         },
       },
@@ -484,28 +535,49 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
         {workspaces.length > 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: theme.text }]}>Recent Folders & Workspaces</Text>
-              <TouchableOpacity onPress={() => setShowCloudTransferModal(true)}>
-                <Text style={[styles.viewAllText, { color: '#059669' }]}>☁️ Sync to Drive</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Folder size={16} color="#f59e0b" style={{ marginRight: 6 }} />
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>Recent Folders & Workspaces</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <TouchableOpacity onPress={() => setShowCloudTransferModal(true)}>
+                  <Text style={[styles.viewAllText, { color: '#059669' }]}>☁️ Sync</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleClearAllWorkspaces}>
+                  <Text style={[styles.viewAllText, { color: theme.textMuted }]}>Clear all</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wsRow}>
               {workspaces.map((ws) => (
-                <TouchableOpacity
+                <View
                   key={ws.id}
-                  style={[styles.wsCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
-                  onPress={() => handleOpenWorkspace(ws)}
+                  style={[styles.wsCard, { backgroundColor: theme.surface, borderColor: theme.border, position: 'relative' }]}
                 >
-                  <View style={[styles.wsIconCircle, { backgroundColor: '#f59e0b18' }]}>
-                    <Folder size={18} color="#f59e0b" />
-                  </View>
-                  <Text style={[styles.wsTitle, { color: theme.text }]} numberOfLines={1}>
-                    {ws.name}
-                  </Text>
-                  <Text style={[styles.wsSub, { color: theme.textMuted }]}>
-                    {ws.fileCount ? `${ws.fileCount} files` : 'Folder'}
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ flex: 1 }}
+                    onPress={() => handleOpenWorkspace(ws)}
+                    onLongPress={() => handleDeleteWorkspace(ws.id, ws.name)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.wsIconCircle, { backgroundColor: '#f59e0b18' }]}>
+                      <Folder size={18} color="#f59e0b" />
+                    </View>
+                    <Text style={[styles.wsTitle, { color: theme.text }]} numberOfLines={1}>
+                      {ws.name}
+                    </Text>
+                    <Text style={[styles.wsSub, { color: theme.textMuted }]}>
+                      {ws.fileCount ? `${ws.fileCount} files` : 'Folder'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.wsRemoveBtn}
+                    onPress={() => handleDeleteWorkspace(ws.id, ws.name)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <X size={12} color={theme.textMuted} />
+                  </TouchableOpacity>
+                </View>
               ))}
             </ScrollView>
           </View>
@@ -605,9 +677,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>Recent Items</Text>
-            <Text style={[styles.recentsCount, { color: theme.textMuted }]}>
-              {filteredDocs.length} {filteredDocs.length === 1 ? 'file' : 'files'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={[styles.recentsCount, { color: theme.textMuted }]}>
+                {filteredDocs.length} {filteredDocs.length === 1 ? 'file' : 'files'}
+              </Text>
+              {filteredDocs.length > 0 && (
+                <TouchableOpacity onPress={handleClearAllDocs}>
+                  <Text style={[styles.viewAllText, { color: theme.textMuted }]}>Clear all</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
           {filteredDocs.length === 0 ? (
@@ -986,6 +1065,18 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 10,
     borderWidth: 1,
+  },
+  wsRemoveBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    zIndex: 2,
   },
   wsIconCircle: {
     width: 32,

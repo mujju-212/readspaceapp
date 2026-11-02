@@ -550,7 +550,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
               <View style={[styles.workspaceBanner, { backgroundColor: '#f59e0b12', borderColor: '#f59e0b35', marginBottom: 10 }]}>
                 <View style={styles.workspaceBannerLeft}>
                   <FolderOpen size={20} color="#f59e0b" />
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, marginLeft: 8 }}>
                     <Text style={[styles.wsBannerTitle, { color: theme.text }]} numberOfLines={1}>
                       {activeWorkspace.name}
                     </Text>
@@ -559,28 +559,55 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                     </Text>
                   </View>
                 </View>
-                <TouchableOpacity
-                  onPress={async () => {
-                    const firstFile = findFirstFileEntry(activeWorkspace.entries || []);
-                    if (firstFile) {
-                      setFolderLoading(true);
-                      setFolderLoadingMsg(`Opening ${firstFile.name}…`);
-                      try {
-                        const doc = await openFolderEntry(firstFile);
-                        setFolderLoading(false);
-                        navigation.navigate('Reader', { doc, workspace: activeWorkspace, initialSidebarOpen: true });
-                        return;
-                      } catch (e) {
-                        console.warn('Could not open workspace first file:', e);
-                      } finally {
-                        setFolderLoading(false);
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      const firstFile = findFirstFileEntry(activeWorkspace.entries || []);
+                      if (firstFile) {
+                        setFolderLoading(true);
+                        setFolderLoadingMsg(`Opening ${firstFile.name}…`);
+                        try {
+                          const doc = await openFolderEntry(firstFile);
+                          setFolderLoading(false);
+                          navigation.navigate('Reader', { doc, workspace: activeWorkspace, initialSidebarOpen: true });
+                          return;
+                        } catch (e) {
+                          console.warn('Could not open workspace first file:', e);
+                        } finally {
+                          setFolderLoading(false);
+                        }
                       }
-                    }
-                    setShowExplorerModal(true);
-                  }}
-                >
-                  <Text style={[styles.wsBannerAction, { color: '#f59e0b' }]}>Reader →</Text>
-                </TouchableOpacity>
+                      setShowExplorerModal(true);
+                    }}
+                  >
+                    <Text style={[styles.wsBannerAction, { color: '#f59e0b' }]}>Reader →</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ padding: 4 }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    onPress={() => {
+                      Alert.alert(
+                        'Remove Workspace Folder',
+                        `Remove "${activeWorkspace.name}" from your saved folders? (Files on your device will remain intact)`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Remove',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await Storage.removeWorkspace(activeWorkspace.id);
+                              const remaining = await Storage.getWorkspaces();
+                              setWorkspaces(remaining);
+                              setActiveWorkspace(remaining.length > 0 ? remaining[0] : null);
+                            },
+                          },
+                        ]
+                      );
+                    }}
+                  >
+                    <Trash2 size={16} color="#ef4444" />
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
