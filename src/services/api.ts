@@ -1,5 +1,4 @@
 import { Platform, Linking } from 'react-native';
-import * as WebBrowser from 'expo-web-browser';
 import { Storage } from './storage';
 import { UserAccount, DriveAccount } from '../types';
 
@@ -319,31 +318,40 @@ export const Api = {
       // If popup was blocked by browser, fallback to standard redirect
       window.location.href = url;
     } else {
+      // On native mobile (Android/iOS), open URL via native Linking and listen for deep-link return
       try {
-        const redirectUrl = 'readspace://auth';
-        const result = await WebBrowser.openAuthSessionAsync(url, redirectUrl);
-        if (result.type === 'success' && result.url) {
-          let query = '';
-          if (result.url.includes('?')) query = result.url.split('?')[1];
-          else if (result.url.includes('#')) query = result.url.split('#')[1];
+        const subscription = Linking.addEventListener('url', async (event) => {
+          if (
+            event.url &&
+            (event.url.startsWith('readspace://') ||
+              event.url.startsWith('com.readspace.app://') ||
+              event.url.includes('signedin=1') ||
+              event.url.includes('token='))
+          ) {
+            subscription.remove();
+            let query = '';
+            if (event.url.includes('?')) query = event.url.split('?')[1];
+            else if (event.url.includes('#')) query = event.url.split('#')[1];
 
-          const params = new URLSearchParams(query);
-          const token = params.get('token');
-          const drive = params.get('drive') === '1' || params.get('drive_connected') === '1';
+            const params = new URLSearchParams(query);
+            const token = params.get('token');
+            const drive = params.get('drive') === '1' || params.get('drive_connected') === '1';
 
-          if (token) {
-            await Storage.saveSessionToken(token);
+            if (token) {
+              await Storage.saveSessionToken(token);
+            }
+            if (drive) {
+              await Storage.saveDriveAccount({ connected: true });
+            }
+            const synced = await this.syncSession();
+            if (onSuccess) onSuccess(synced);
           }
-          if (drive) {
-            await Storage.saveDriveAccount({ connected: true });
-          }
-          const synced = await this.syncSession();
-          if (onSuccess) onSuccess(synced);
-          return;
-        }
-      } catch (err) {
-        console.warn('WebBrowser auth session error, falling back to Linking:', err);
+        });
+
         await Linking.openURL(url);
+      } catch (err) {
+        console.warn('Linking openURL error:', err);
+        throw err;
       }
     }
   },
