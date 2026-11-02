@@ -1,46 +1,49 @@
-import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet, Linking, AppState } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  ActivityIndicator,
+  StyleSheet,
+  Linking,
+  AppState,
+  Image,
+  Text,
+  Platform,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { Storage } from './src/services/storage';
 import { Api } from './src/services/api';
 import { sessionBus } from './src/services/sessionBus';
 import { ReaderSettings } from './src/types';
-import { Text } from 'react-native';
 import { THEMES } from './src/theme/colors';
+import {
+  hasAllFilesAccess,
+  checkAndPromptStoragePermission,
+} from './src/services/folder';
 
 const BRAND_BG = '#2563eb';
 
 /**
- * Branded loading screen shown while settings/session load — replaces the old
- * bare black flash so the app never appears frozen at start-up.
+ * Branded splash screen displaying the official ReadSpace logo.
+ * Matches the native splash screen precisely to prevent any blank screen flashes.
  */
 function BrandLoading({ progressText }: { progressText?: string }) {
   return (
     <View style={[styles.loadingContainer, { backgroundColor: BRAND_BG }]}>
-      <View style={styles.logoCircle}>
-        <View style={styles.pageWrap}>
-          <View style={styles.pageBar1} />
-          <View style={styles.pageBar2} />
-          <View style={styles.pageBar3} />
-        </View>
-      </View>
-      <View style={styles.titleRow}>
-        <View style={[styles.titleAccent, { backgroundColor: '#93c5fd' }]} />
-        <View style={[styles.titleAccent, { backgroundColor: '#bfdbfe' }]} />
-      </View>
-      <View style={styles.subtitleRow}>
-        <View style={[styles.subtitleBar, { backgroundColor: 'rgba(255,255,255,0.45)' }]} />
-        <View style={[styles.subtitleBar, { backgroundColor: 'rgba(255,255,255,0.25)', width: '58%' }]} />
-      </View>
-      <ActivityIndicator color="#ffffff" size="large" style={{ marginTop: 26 }} />
+      <Image
+        source={require('./assets/splash-icon.png')}
+        style={styles.splashLogo}
+        resizeMode="contain"
+      />
+      <Text style={styles.splashBrandTitle}>ReadSpace</Text>
+      <Text style={styles.splashBrandSub}>Universal Reading Workspace</Text>
+      <ActivityIndicator color="#ffffff" size="small" style={{ marginTop: 28 }} />
       {progressText ? <Text style={styles.progressText}>{progressText}</Text> : null}
     </View>
   );
 }
-
 
 export default function App() {
   const [settings, setSettings] = useState<ReaderSettings>({
@@ -52,7 +55,11 @@ export default function App() {
     keepAwake: true,
     backgroundAudio: true,
   });
-  const [loading, setLoading] = useState(true);
+
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [navReady, setNavReady] = useState(false);
+  const [splashVisible, setSplashVisible] = useState(true);
+  const permissionCheckedRef = useRef(false);
 
   useEffect(() => {
     // If inside a popup after OAuth redirect, send message to opener window and close
@@ -107,9 +114,7 @@ export default function App() {
     void Linking.getInitialURL().then(handleDeepLink);
     const sub = Linking.addEventListener('url', handleDeepLink);
 
-    // When returning from the system browser (Google sign-in), screens never
-    // re-mount and navigation focus does not re-fire — sync the session and
-    // bump the bus so subscribed screens refresh themselves.
+    // When returning from system settings or browser, sync session and check permission
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void Api.syncSession().then(() => sessionBus.bump());
@@ -123,7 +128,7 @@ export default function App() {
       } catch (err) {
         console.warn('Failed to load settings from storage', err);
       } finally {
-        setLoading(false);
+        setSettingsReady(true);
       }
     };
     init();
@@ -134,6 +139,33 @@ export default function App() {
     };
   }, []);
 
+  // Ensure logo splash stays visible until both settings and navigation are mounted,
+  // with a minimum duration to guarantee no white/blank flash occurs.
+  useEffect(() => {
+    if (!settingsReady || !navReady) return;
+
+    const timer = setTimeout(() => {
+      setSplashVisible(false);
+
+      // Prompt for storage permission on Android startup if not yet granted
+      if (Platform.OS === 'android' && !permissionCheckedRef.current) {
+        permissionCheckedRef.current = true;
+        setTimeout(async () => {
+          try {
+            const hasAccess = await hasAllFilesAccess();
+            if (!hasAccess) {
+              await checkAndPromptStoragePermission('startup');
+            }
+          } catch (err) {
+            console.warn('Startup storage permission prompt error:', err);
+          }
+        }, 500);
+      }
+    }, 700);
+
+    return () => clearTimeout(timer);
+  }, [settingsReady, navReady]);
+
   const handleUpdateSettings = async (partial: Partial<ReaderSettings>) => {
     const updated = { ...settings, ...partial };
     setSettings(updated);
@@ -143,71 +175,62 @@ export default function App() {
   const currentTheme = THEMES[settings.theme] || THEMES.ice;
   const isDark = settings.theme === 'dark';
 
-  if (loading) {
-    return (
-      <View style={{ flex: 1, backgroundColor: BRAND_BG }}>
-        <BrandLoading progressText="Preparing your workspace…" />
-      </View>
-    );
-  }
+  const navTheme = {
+    ...DefaultTheme,
+    colors: {
+      ...DefaultTheme.colors,
+      background: currentTheme.bg,
+    },
+  };
 
   return (
     <SafeAreaProvider>
-      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={currentTheme.bg} />
-      <NavigationContainer>
+      <StatusBar
+        style={splashVisible ? 'light' : (isDark ? 'light' : 'dark')}
+        backgroundColor={splashVisible ? BRAND_BG : currentTheme.bg}
+      />
+      <NavigationContainer
+        theme={navTheme}
+        onReady={() => setNavReady(true)}
+      >
         <RootNavigator settings={settings} onUpdateSettings={handleUpdateSettings} />
       </NavigationContainer>
+
+      {/* Branded Logo Overlay: perfectly covers transition from native splash to avoid blank screen */}
+      {splashVisible && (
+        <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
+          <BrandLoading />
+        </View>
+      )}
     </SafeAreaProvider>
   );
 }
-
 
 const styles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 24,
   },
-  logoCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 24,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 8,
+  splashLogo: {
+    width: 130,
+    height: 130,
+    marginBottom: 8,
   },
-  pageWrap: {
-    width: 38,
-    height: 48,
-    borderRadius: 4,
-    backgroundColor: '#eff6ff',
-    borderWidth: 2,
-    borderColor: '#2563eb',
-    justifyContent: 'flex-end',
-    paddingBottom: 7,
-    paddingHorizontal: 6,
+  splashBrandTitle: {
+    color: '#ffffff',
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginTop: 6,
   },
-  pageBar1: { backgroundColor: '#2563eb', height: 4, borderRadius: 2, width: 24, marginBottom: 5 },
-  pageBar2: { backgroundColor: '#93c5fd', height: 4, borderRadius: 2, width: 17, marginBottom: 5 },
-  pageBar3: { backgroundColor: '#bfdbfe', height: 4, borderRadius: 2, width: 21 },
-  titleRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 22,
+  splashBrandSub: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 4,
   },
-  titleAccent: { width: 110, height: 14, borderRadius: 6 },
-  subtitleRow: {
-    flexDirection: 'column',
-    gap: 7,
-    marginTop: 10,
-    alignItems: 'center',
-  },
-  subtitleBar: { height: 7, borderRadius: 4, width: '55%' },
   progressText: {
     color: 'rgba(255,255,255,0.85)',
     fontSize: 12,

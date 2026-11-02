@@ -10,6 +10,7 @@ import {
   TextInput,
   ActivityIndicator,
   Modal,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -32,7 +33,13 @@ import {
 import { Storage } from '../services/storage';
 import { useSessionVersion } from '../services/sessionBus';
 import { pickDocuments } from '../services/picker';
-import { pickWorkspaceFolder, openFolderEntry, findFirstFileEntry } from '../services/folder';
+import {
+  pickWorkspaceFolder,
+  openFolderEntry,
+  findFirstFileEntry,
+  hasAllFilesAccess,
+  checkAndPromptStoragePermission,
+} from '../services/folder';
 import { MobileDoc, ReaderSettings, SavedLink, UserAccount, WorkspaceFolder, DriveAccount, Bookmark as BookmarkType } from '../types';
 import { THEMES } from '../theme/colors';
 import { AuthModal } from '../components/AuthModal';
@@ -130,6 +137,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
 
   // Open Folder: picks a directory, loads workspace, finds first file, and opens Reader workbench
   const handleOpenFolder = async () => {
+    if (Platform.OS === 'android') {
+      const hasAccess = await hasAllFilesAccess();
+      if (!hasAccess) {
+        await checkAndPromptStoragePermission('folder');
+      }
+    }
     setLoadingOverlay(true);
     setLoadingOverlayMsg('Opening directory…');
     try {
@@ -161,6 +174,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
 
   // Open File: picks an individual file and opens it directly in Reader
   const handleOpenFile = async () => {
+    if (Platform.OS === 'android') {
+      const hasAccess = await hasAllFilesAccess();
+      if (!hasAccess) {
+        await checkAndPromptStoragePermission('folder');
+      }
+    }
     try {
       const picked = await pickDocuments();
       if (picked.length > 0) {
@@ -181,6 +200,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
 
   // Open Workspace from Recent list: loads first file and opens Reader workbench
   const handleOpenWorkspace = async (ws: WorkspaceFolder) => {
+    if (Platform.OS === 'android' && !ws.isDrive) {
+      const hasAccess = await hasAllFilesAccess();
+      if (!hasAccess) {
+        await checkAndPromptStoragePermission('folder');
+      }
+    }
     setLoadingOverlay(true);
     setLoadingOverlayMsg(`Opening ${ws.name}…`);
     try {

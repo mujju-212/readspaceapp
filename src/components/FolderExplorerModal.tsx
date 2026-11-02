@@ -41,6 +41,8 @@ import {
   grantSubfolderPermission,
   hasAllFilesAccess,
   requestAllFilesAccess,
+  checkAndPromptStoragePermission,
+  safUriToFilePath,
 } from '../services/folder';
 import { Storage } from '../services/storage';
 import { Api } from '../services/api';
@@ -187,7 +189,16 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
       return children;
     }
 
-    const subEntries = await scanDirectoryUri(entry.uri, 0);
+    // On Android, if we have a content:// SAF URI, convert to direct path if possible
+    let scanUri = entry.uri;
+    if (Platform.OS === 'android' && !entry.isDrive) {
+      const direct = safUriToFilePath(entry.uri);
+      if (direct) {
+        scanUri = direct;
+      }
+    }
+
+    const subEntries = await scanDirectoryUri(scanUri, 0);
     return subEntries || [];
   };
 
@@ -203,6 +214,15 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
       entry.isDirectory &&
       (!entry.children || entry.children.length === 0)
     ) {
+      if (Platform.OS === 'android' && !entry.isDrive) {
+        const hasAccess = await hasAllFilesAccess();
+        if (!hasAccess) {
+          setFailedUri(uri);
+          await checkAndPromptStoragePermission('subfolder');
+          return;
+        }
+      }
+
       setExpandingUri(uri);
       try {
         const children = await loadChildrenFor(entry);
@@ -210,6 +230,12 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
       } catch (e: any) {
         console.warn('Could not load subfolder in explorer:', uri, e);
         setFailedUri(uri);
+        if (Platform.OS === 'android' && !entry.isDrive) {
+          const hasAccess = await hasAllFilesAccess();
+          if (!hasAccess) {
+            await checkAndPromptStoragePermission('subfolder');
+          }
+        }
       } finally {
         setExpandingUri(null);
       }
@@ -218,6 +244,14 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
 
   const retryScanDir = async (entry: FolderEntry) => {
     setFailedUri(null);
+    if (Platform.OS === 'android' && !entry.isDrive) {
+      const hasAccess = await hasAllFilesAccess();
+      if (!hasAccess) {
+        await checkAndPromptStoragePermission('subfolder');
+        return;
+      }
+    }
+
     setExpandingUri(entry.uri);
     try {
       const children = await loadChildrenFor(entry);
@@ -231,41 +265,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
       if (Platform.OS === 'android' && !entry.isDrive) {
         const hasAccess = await hasAllFilesAccess();
         if (!hasAccess) {
-          Alert.alert(
-            'Full Storage Access',
-            'To open all folders and subfolders without permission prompts, enable "Allow access to manage all files" for ReadSpace in Settings.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Enable in Settings',
-                onPress: async () => {
-                  await requestAllFilesAccess();
-                },
-              },
-              {
-                text: 'Select Subfolder',
-                onPress: async () => {
-                  setExpandingUri(entry.uri);
-                  try {
-                    const res = await grantSubfolderPermission(entry.uri);
-                    if (res && res.entries) {
-                      entry.uri = res.directoryUri;
-                      attachChildren(entry, res.entries);
-                      setExpanded((prev) => ({
-                        ...prev,
-                        [entry.uri]: true,
-                        [res.directoryUri]: true,
-                      }));
-                    }
-                  } catch (err) {
-                    console.warn('Subfolder permission grant failed:', err);
-                  } finally {
-                    setExpandingUri(null);
-                  }
-                },
-              },
-            ]
-          );
+          await checkAndPromptStoragePermission('subfolder');
           return;
         }
       }
@@ -277,41 +277,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
       if (Platform.OS === 'android' && !entry.isDrive) {
         const hasAccess = await hasAllFilesAccess();
         if (!hasAccess) {
-          Alert.alert(
-            'Full Storage Access',
-            'To open all folders and subfolders without permission prompts, enable "Allow access to manage all files" for ReadSpace in Settings.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Enable in Settings',
-                onPress: async () => {
-                  await requestAllFilesAccess();
-                },
-              },
-              {
-                text: 'Select Subfolder',
-                onPress: async () => {
-                  setExpandingUri(entry.uri);
-                  try {
-                    const res = await grantSubfolderPermission(entry.uri);
-                    if (res && res.entries) {
-                      entry.uri = res.directoryUri;
-                      attachChildren(entry, res.entries);
-                      setExpanded((prev) => ({
-                        ...prev,
-                        [entry.uri]: true,
-                        [res.directoryUri]: true,
-                      }));
-                    }
-                  } catch (err) {
-                    console.warn('Subfolder permission grant failed:', err);
-                  } finally {
-                    setExpandingUri(null);
-                  }
-                },
-              },
-            ]
-          );
+          await checkAndPromptStoragePermission('subfolder');
           return;
         }
       }
@@ -320,7 +286,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
         'Cannot Open Sub-folder',
         entry.isDrive || entry.uri?.startsWith('gdrive://')
           ? 'Google Drive returned an error for this folder. Check your connection and Drive authorization, then retry.'
-          : 'This folder is empty or inaccessible.'
+          : 'This folder is empty or inaccessible. If permissions were changed, please re-open the folder.'
       );
     } finally {
       setExpandingUri(null);

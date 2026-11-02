@@ -15,11 +15,14 @@ const { StorageAccessFramework } = FileSystem;
 export async function hasAllFilesAccess(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   try {
-    const root = 'file:///storage/emulated/0';
-    const info = await FileSystem.getInfoAsync(root);
-    if (!info.exists) return false;
-    const testList = await FileSystem.readDirectoryAsync(root);
-    return Array.isArray(testList);
+    const candidates = ['file:///storage/emulated/0', 'file:///sdcard'];
+    for (const root of candidates) {
+      try {
+        const list = await FileSystem.readDirectoryAsync(root);
+        if (Array.isArray(list)) return true;
+      } catch {}
+    }
+    return false;
   } catch {
     return false;
   }
@@ -31,27 +34,78 @@ export async function hasAllFilesAccess(): Promise<boolean> {
 export async function requestAllFilesAccess(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   try {
-    // 1. App-specific All Files Access toggle in Android system settings
-    try {
-      await Linking.sendIntent('android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION', [
-        { key: 'package', value: 'package:com.readspace.app' },
-      ]);
-      return true;
-    } catch {}
-
-    // 2. Global All Files Access settings list
+    // 1. Android 11+ (API 30+) Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
     try {
       await Linking.sendIntent('android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION');
       return true;
     } catch {}
 
-    // 3. Fallback to app settings
+    // 2. Try App-specific action
+    try {
+      await Linking.sendIntent('android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION');
+      return true;
+    } catch {}
+
+    // 3. Fallback to App Info settings
     await Linking.openSettings();
     return true;
   } catch (e) {
     console.warn('Could not launch All Files Access intent:', e);
-    return false;
+    try {
+      await Linking.openSettings();
+      return true;
+    } catch {
+      return false;
+    }
   }
+}
+
+/**
+ * Friendly prompt asking the user to grant storage access.
+ * Returns true if user tapped Grant Permission or already has access.
+ */
+export async function checkAndPromptStoragePermission(
+  context: 'startup' | 'folder' | 'subfolder' = 'folder'
+): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  const hasAccess = await hasAllFilesAccess();
+  if (hasAccess) return true;
+
+  return new Promise<boolean>((resolve) => {
+    let title = 'Storage Access Required';
+    let message =
+      'ReadSpace needs permission to manage files so you can open local documents, PDFs, and browse all nested folders seamlessly without repeated permission prompts.';
+
+    if (context === 'startup') {
+      title = 'Allow Storage Access';
+      message =
+        'Welcome to ReadSpace! To open local documents, view PDFs, and explore workspace folders on your device, allow ReadSpace to access your files in Settings.';
+    } else if (context === 'subfolder') {
+      title = 'Subfolder Access Permission';
+      message =
+        'To open nested subfolders without repeated prompts, enable "Allow access to manage all files" for ReadSpace in Settings.';
+    }
+
+    Alert.alert(
+      title,
+      message,
+      [
+        {
+          text: context === 'startup' ? 'Not Now' : 'Cancel',
+          style: 'cancel',
+          onPress: () => resolve(false),
+        },
+        {
+          text: 'Grant Permission',
+          onPress: async () => {
+            await requestAllFilesAccess();
+            resolve(true);
+          },
+        },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) }
+    );
+  });
 }
 
 /**
@@ -64,6 +118,15 @@ export function safUriToFilePath(uri: string): string | null {
   if (uri.startsWith('file://')) return uri;
   try {
     const decoded = decodeURIComponent(uri);
+
+    // Check for raw: path in download documents
+    const rawIdx = decoded.indexOf('raw:');
+    if (rawIdx !== -1) {
+      const rawPath = decoded.substring(rawIdx + 4);
+      const cleanRaw = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+      return `file://${cleanRaw}`;
+    }
+
     let target = decoded;
     if (decoded.includes('/document/')) {
       target = decoded.split('/document/').pop() || decoded;
@@ -75,6 +138,10 @@ export function safUriToFilePath(uri: string): string | null {
     if (colonIdx !== -1) {
       const volume = target.substring(0, colonIdx);
       const relPath = target.substring(colonIdx + 1);
+      if (relPath.startsWith('/storage/') || relPath.startsWith('storage/')) {
+        const clean = relPath.startsWith('/') ? relPath : `/${relPath}`;
+        return `file://${clean}`;
+      }
       const basePath = volume.toLowerCase() === 'primary' ? '/storage/emulated/0' : `/storage/${volume}`;
       const cleanRel = relPath.replace(/^\/+/, '');
       const fullPath = cleanRel ? `${basePath}/${cleanRel}` : basePath;
@@ -204,22 +271,7 @@ export async function pickWorkspaceFolder(): Promise<WorkspaceFolder | null> {
     // If All Files Access is not yet granted, guide user to enable it for seamless sub-folder access
     const hasAccess = await hasAllFilesAccess();
     if (!hasAccess) {
-      await new Promise<void>((resolve) => {
-        Alert.alert(
-          'Enable Storage Access',
-          'To open folders and all nested sub-folders seamlessly without repeated permission prompts, enable "Allow access to manage all files" for ReadSpace in Settings.',
-          [
-            { text: 'Skip for Now', style: 'cancel', onPress: () => resolve() },
-            {
-              text: 'Enable in Settings',
-              onPress: async () => {
-                await requestAllFilesAccess();
-                resolve();
-              },
-            },
-          ]
-        );
-      });
+      await checkAndPromptStoragePermission('folder');
     }
 
     if (StorageAccessFramework) {
