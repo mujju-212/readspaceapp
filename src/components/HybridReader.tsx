@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   Dimensions,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 import { MobileDoc, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
 import {
@@ -53,15 +54,18 @@ const NativeImageViewer: React.FC<{
   const initialPanAtTouch = useRef({ x: 0, y: 0 });
   const initialDistance = useRef(0);
   const baseScaleOnPinch = useRef(1);
+  const basePanOnPinch = useRef({ x: 0, y: 0 });
+  const screenFocalOnPinch = useRef({ x: 0, y: 0 });
   const isPinching = useRef(false);
+  const activeTouchCount = useRef(0);
   const lastTapTime = useRef(0);
 
   const clampBounds = (x: number, y: number, currentScale: number) => {
     if (currentScale <= 1.05) {
       return { x: 0, y: 0 };
     }
-    const maxBoundX = Math.max(0, (winWidth * (currentScale - 1)) / 2 + 30);
-    const maxBoundY = Math.max(0, (winHeight * (currentScale - 1)) / 2 + 50);
+    const maxBoundX = Math.max(0, (winWidth * 0.94 * (currentScale - 1)) / 2 + 30);
+    const maxBoundY = Math.max(0, (winHeight * 0.88 * (currentScale - 1)) / 2 + 50);
     return {
       x: Math.min(maxBoundX, Math.max(-maxBoundX, x)),
       y: Math.min(maxBoundY, Math.max(-maxBoundY, y)),
@@ -96,6 +100,49 @@ const NativeImageViewer: React.FC<{
     ]).start();
   };
 
+  // Begin (or restart) a pinch gesture: snapshot distance, current scale/pan and
+  // the screen-space focal point (midpoint of the two fingers) so the zoom can
+  // be anchored around exactly where the user is pinching.
+  const startPinch = (touches: any[]) => {
+    const [t0, t1] = touches;
+    initialDistance.current = Math.max(1, Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY));
+    baseScaleOnPinch.current = Math.max(scaleNum.current, 0.001);
+    basePanOnPinch.current = { ...panOffset.current };
+    screenFocalOnPinch.current = {
+      x: (t0.pageX + t1.pageX) / 2 - winWidth / 2,
+      y: (t0.pageY + t1.pageY) / 2 - winHeight / 2,
+    };
+    isPinching.current = true;
+  };
+
+  // Scale while keeping the content point under the pinch midpoint visually fixed
+  const applyPinch = (touches: any[]) => {
+    const [t0, t1] = touches;
+    const currentDistance = Math.max(1, Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY));
+    if (initialDistance.current <= 0) return;
+    const ratio = currentDistance / initialDistance.current;
+    const s0 = baseScaleOnPinch.current;
+    const targetScale = Math.min(6, Math.max(1, s0 * ratio));
+
+    // For a center-anchored scale s with translation t, a content point o maps
+    // to screen o*s + t. Keeping the focal point fixed gives:
+    //   t' = t - (s' - s) * (focal - center - t) / s
+    const fx = screenFocalOnPinch.current.x;
+    const fy = screenFocalOnPinch.current.y;
+    const bx = basePanOnPinch.current.x;
+    const by = basePanOnPinch.current.y;
+    const factor = (targetScale - s0) / s0;
+    const rawX = bx - factor * (fx - bx);
+    const rawY = by - factor * (fy - by);
+
+    const bounded = clampBounds(rawX, rawY, targetScale);
+    scale.setValue(targetScale);
+    pan.setValue(bounded);
+    panOffset.current = bounded;
+    scaleNum.current = targetScale;
+    setScaleDisplay(targetScale);
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -103,13 +150,12 @@ const NativeImageViewer: React.FC<{
 
       onPanResponderGrant: (evt) => {
         const touches = evt.nativeEvent.touches;
-        if (touches.length === 2) {
-          isPinching.current = true;
-          const [t0, t1] = touches;
-          initialDistance.current = Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY);
-          baseScaleOnPinch.current = scaleNum.current;
+        if (touches.length >= 2) {
+          startPinch(touches);
+          activeTouchCount.current = touches.length;
         } else if (touches.length === 1) {
           isPinching.current = false;
+          activeTouchCount.current = 1;
           touchStartPoint.current = { x: touches[0].pageX, y: touches[0].pageY };
           initialPanAtTouch.current = { ...panOffset.current };
 
@@ -117,10 +163,20 @@ const NativeImageViewer: React.FC<{
           const now = Date.now();
           if (now - lastTapTime.current < 320) {
             lastTapTime.current = 0;
+            // Swallow the pointer motion right after the double tap
+            activeTouchCount.current = 0;
+            touchStartPoint.current = { x: touches[0].pageX, y: touches[0].pageY };
+            initialPanAtTouch.current = { ...panOffset.current };
             if (scaleNum.current > 1.3) {
               animateTo(1, 0, 0);
             } else {
-              animateTo(2.6, 0, 0);
+              // Zoom in anchored at the tapped point
+              const s0 = Math.max(scaleNum.current, 0.001);
+              const target = 2.6;
+              const fx = touches[0].pageX - winWidth / 2;
+              const fy = touches[0].pageY - winHeight / 2;
+              const factor = (target - s0) / s0;
+              animateTo(target, panOffset.current.x - factor * (fx - panOffset.current.x), panOffset.current.y - factor * (fy - panOffset.current.y));
             }
             return;
           }
@@ -130,19 +186,27 @@ const NativeImageViewer: React.FC<{
 
       onPanResponderMove: (evt) => {
         const touches = evt.nativeEvent.touches;
+        const count = touches.length;
+        const prevCount = activeTouchCount.current;
 
-        if (touches.length === 2) {
-          isPinching.current = true;
-          const [t0, t1] = touches;
-          const currentDistance = Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY);
-          if (initialDistance.current > 0) {
-            const ratio = currentDistance / initialDistance.current;
-            const targetScale = Math.min(6, Math.max(0.7, baseScaleOnPinch.current * ratio));
-            scale.setValue(targetScale);
-            scaleNum.current = targetScale;
-            setScaleDisplay(targetScale);
+        if (count !== prevCount) {
+          if (prevCount <= 1 && count >= 2) {
+            // Second finger landed mid-gesture — the pinch was previously dead
+            // because it was only initialized in the grant handler.
+            startPinch(touches);
+          } else if (prevCount >= 2 && count === 1) {
+            // Pinch ended with one finger still down — re-anchor drag on it
+            isPinching.current = false;
+            const remaining = touches[0];
+            touchStartPoint.current = { x: remaining.pageX, y: remaining.pageY };
+            initialPanAtTouch.current = { ...panOffset.current };
           }
-        } else if (touches.length === 1 && !isPinching.current) {
+          activeTouchCount.current = count;
+        }
+
+        if (isPinching.current && count >= 2) {
+          applyPinch(touches);
+        } else if (count === 1 && !isPinching.current) {
           const dx = touches[0].pageX - touchStartPoint.current.x;
           const dy = touches[0].pageY - touchStartPoint.current.y;
 
@@ -157,25 +221,18 @@ const NativeImageViewer: React.FC<{
       },
 
       onPanResponderRelease: () => {
-        if (isPinching.current) {
-          isPinching.current = false;
-          if (scaleNum.current < 1) {
-            animateTo(1, 0, 0);
-          } else {
-            const bounded = clampBounds(panOffset.current.x, panOffset.current.y, scaleNum.current);
-            animateTo(scaleNum.current, bounded.x, bounded.y);
-          }
+        isPinching.current = false;
+        activeTouchCount.current = 0;
+        if (scaleNum.current <= 1.05) {
+          animateTo(1, 0, 0);
         } else {
-          if (scaleNum.current <= 1.05) {
-            animateTo(1, 0, 0);
-          } else {
-            const bounded = clampBounds(panOffset.current.x, panOffset.current.y, scaleNum.current);
-            animateTo(scaleNum.current, bounded.x, bounded.y);
-          }
+          const bounded = clampBounds(panOffset.current.x, panOffset.current.y, scaleNum.current);
+          animateTo(scaleNum.current, bounded.x, bounded.y);
         }
       },
       onPanResponderTerminate: () => {
         isPinching.current = false;
+        activeTouchCount.current = 0;
         animateTo(scaleNum.current <= 1.05 ? 1 : scaleNum.current);
       },
     })
@@ -191,6 +248,8 @@ const NativeImageViewer: React.FC<{
       <View style={styles.imageGestureArea} {...panResponder.panHandlers}>
         <Animated.Image
           source={{ uri: imageUri }}
+          fadeDuration={0}
+          resizeMethod="scale"
           style={[
             styles.nativeImage,
             {
@@ -233,74 +292,13 @@ const NativeImageViewer: React.FC<{
   );
 };
 
-export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPositionChange }) => {
-  const webViewRef = useRef<any>(null);
-  const iframeRef = useRef<any>(null);
-  const themeColors = THEMES[settings.theme];
-
-  // 1. High-Performance Native Image Engine with Touch Gestures on Mobile
-  if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {
-    const imageUri = doc.base64Data
-      ? (doc.base64Data.startsWith('data:') ? doc.base64Data : `data:${doc.mime || 'image/jpeg'};base64,${doc.base64Data}`)
-      : doc.uri;
-
-    return <NativeImageViewer imageUri={imageUri || ''} name={doc.name} themeColors={themeColors} />;
-  }
-
-  // Listen for window message on Web
-  useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const handleWindowMessage = (event: MessageEvent) => {
-        try {
-          const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-          if (data?.action === 'position' && onPositionChange) {
-            onPositionChange(data.position);
-          }
-        } catch {}
-      };
-      window.addEventListener('message', handleWindowMessage);
-      return () => window.removeEventListener('message', handleWindowMessage);
-    }
-  }, [onPositionChange]);
-
-  // Send settings update
-  useEffect(() => {
-    const payload = JSON.stringify({
-      action: 'updateSettings',
-      settings: {
-        theme: settings.theme,
-        fontSize: settings.fontSize,
-        lineHeight: settings.lineHeight,
-        fontFamily: settings.fontFamily,
-      },
-    });
-
-    if (Platform.OS === 'web') {
-      if (iframeRef.current?.contentWindow) {
-        iframeRef.current.contentWindow.postMessage(payload, '*');
-      }
-    } else {
-      if (webViewRef.current?.postMessage) {
-        webViewRef.current.postMessage(payload);
-      }
-    }
-  }, [settings]);
-
-  const handleMessage = (event: any) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.action === 'position' && onPositionChange) {
-        onPositionChange(data.position);
-      }
-    } catch {}
-  };
-
-  const htmlContent = `
+function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: any): string {
+  return `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>${doc.name}</title>
   <!-- Offline-bundled document engines (Guaranteed zero-network execution) -->
   <script>
@@ -380,8 +378,36 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     .pdf-page canvas {
       display: block;
       width: 100%;
-      height: auto;
+      height: 100%;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: high-quality;
     }
+    img {
+      max-width: 100%;
+      height: auto;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: high-quality;
+    }
+    .pdf-page-inner { position: relative; overflow: hidden; margin: 0 auto; background: #fff; }
+    .textLayer { position: absolute; inset: 0; overflow: hidden; line-height: 1; text-size-adjust: none; }
+    .textLayer span { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; }
+    .textLayer ::selection { background: rgba(59, 130, 246, 0.35); }
+    .rs-toast {
+      position: fixed;
+      bottom: 64px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.95);
+      color: #ffffff;
+      padding: 9px 15px;
+      border-radius: 10px;
+      font-size: 12.5px;
+      z-index: 60;
+      opacity: 0;
+      transition: opacity 0.25s;
+      pointer-events: none;
+    }
+    .rs-toast.show { opacity: 1; }
 
     /* Presentation (PPTX) Viewer */
     .pptx-container {
@@ -536,6 +562,8 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     /* Document Reader (Markdown / Text / DOCX / HTML) */
     .reader-body {
       padding: 20px 18px 80px;
+      user-select: text;
+      -webkit-user-select: text;
       max-width: 760px;
       margin: 0 auto;
       word-break: break-word;
@@ -662,48 +690,185 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
+    function rsToast(msg) {
+      let t = document.querySelector('.rs-toast');
+      if (!t) {
+        t = document.createElement('div');
+        t.className = 'rs-toast';
+        document.body.appendChild(t);
+      }
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(t.__rsTimer);
+      t.__rsTimer = setTimeout(() => t.classList.remove('show'), 1900);
+    }
+
     async function renderDoc() {
       const root = document.getElementById('root');
 
       try {
         if (docKind === 'pdf') {
           root.innerHTML = '<div class="pdf-container" id="pdfRoot"></div>';
-          const container = document.getElementById('pdfRoot');
-          
+          const pdfRoot = document.getElementById('pdfRoot');
+
           if (!docBase64) {
-            container.innerHTML = '<div style="padding:20px;">PDF loading requires file data. Please re-open.</div>';
+            pdfRoot.innerHTML = '<div style="padding:20px;">PDF loading requires file data. Please re-open.</div>';
             return;
           }
 
-          if (typeof pdfjsLib !== 'undefined') {
-            try {
-              if (navigator.onLine) {
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-              } else {
-                pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-              }
-            } catch {
+          if (typeof pdfjsLib === 'undefined') {
+            pdfRoot.innerHTML = '<div style="padding:20px;">PDF engine could not load. Re-open once online to cache it.</div>';
+            return;
+          }
+
+          try {
+            if (navigator.onLine) {
+              pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            } else {
               pdfjsLib.GlobalWorkerOptions.workerSrc = '';
             }
-            const pdfData = base64ToUint8Array(docBase64);
-            const pdf = await pdfjsLib.getDocument({ data: pdfData, disableWorker: !navigator.onLine }).promise;
+          } catch {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+          }
 
-            for (let i = 1; i <= pdf.numPages; i++) {
-              const page = await pdf.getPage(i);
-              const scale = 1.5;
-              const viewport = page.getViewport({ scale });
+          const pdf = await pdfjsLib.getDocument({ data: base64ToUint8Array(docBase64), disableWorker: !navigator.onLine }).promise;
+          window.__rsPdf = pdf;
 
-              const pageDiv = document.createElement('div');
-              pageDiv.className = 'pdf-page';
-              const canvas = document.createElement('canvas');
-              const context = canvas.getContext('2d');
-              canvas.height = viewport.height;
-              canvas.width = viewport.width;
+          // Cheap per-page placeholders first; real pages render progressively,
+          // so even huge PDFs open instantly and stay smooth while scrolling.
+          const placeholders = [];
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const pageDiv = document.createElement('div');
+            pageDiv.className = 'pdf-page';
+            pageDiv.dataset.pageNumber = String(i);
+            pdfRoot.appendChild(pageDiv);
+            placeholders.push(pageDiv);
+            (async () => {
+              try {
+                const p = await pdf.getPage(i);
+                const v1 = p.getViewport({ scale: 1 });
+                pageDiv.style.aspectRatio = v1.width + ' / ' + v1.height;
+              } catch (e) { /* best effort */ }
+            })();
+          }
 
-              await page.render({ canvasContext: context, viewport: viewport }).promise;
-              pageDiv.appendChild(canvas);
-              container.appendChild(pageDiv);
+          const renderingNow = new Set();
+          const pendingRender = new Set();
+          const pump = () => {
+            const iter = pendingRender.values();
+            let nextVal = iter.next();
+            while (renderingNow.size < 2 && nextVal && nextVal.value) {
+              pendingRender.delete(nextVal.value);
+              renderOne(nextVal.value);
+              nextVal = iter.next();
             }
+          };
+
+          const renderOne = async (pageDiv) => {
+            const num = Number(pageDiv.dataset.pageNumber);
+            renderingNow.add(pageDiv);
+            try {
+              const page = await pdf.getPage(num);
+              if (!pageDiv.isConnected) { renderingNow.delete(pageDiv); return; }
+              const vp1 = page.getViewport({ scale: 1 });
+              const cssWidth = Math.round(pageDiv.clientWidth || document.documentElement.clientWidth - 20);
+              const baseScale = cssWidth / vp1.width;
+
+              // High-DPI crisp rendering: 3.2x+ resolution guarantees razor-sharp text on zoom
+              const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3.5);
+              const crispMultiplier = Math.max(dpr * 1.5, 3.2);
+              const renderScale = baseScale * crispMultiplier;
+              const viewport = page.getViewport({ scale: renderScale });
+
+              const wrap = document.createElement('div');
+              wrap.className = 'pdf-page-inner';
+              wrap.style.width = cssWidth + 'px';
+              wrap.style.height = Math.round(cssWidth * (vp1.height / vp1.width)) + 'px';
+              pageDiv.style.width = cssWidth + 'px';
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.round(viewport.width);
+              canvas.height = Math.round(viewport.height);
+              canvas.style.width = '100%';
+              canvas.style.height = '100%';
+              wrap.appendChild(canvas);
+              pageDiv.replaceChildren(wrap);
+              pageDiv.style.aspectRatio = vp1.width + ' / ' + vp1.height;
+              const ctx = canvas.getContext('2d', { alpha: false });
+              if (ctx) {
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+              }
+              await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+              // Text layer aligned to baseScale makes PDF text selectable & copyable via native selection
+              try {
+                if (typeof pdfjsLib.renderTextLayer === 'function') {
+                  const content = await page.getTextContent();
+                  const layer = document.createElement('div');
+                  layer.className = 'textLayer';
+                  layer.style.position = 'absolute';
+                  layer.style.inset = '0';
+                  layer.style.overflow = 'hidden';
+                  layer.style.lineHeight = '1';
+                  wrap.appendChild(layer);
+                  const textViewport = page.getViewport({ scale: baseScale });
+                  pdfjsLib.renderTextLayer({ textContentSource: content, container: layer, viewport: textViewport });
+                }
+              } catch (e) { /* text layer is best effort */ }
+            } catch (e) {
+              console.warn('pdf page render failed', e);
+            } finally {
+              renderingNow.delete(pageDiv);
+              pump();
+            }
+          };
+
+          // Lazy render pages as the user approaches them; free far-away canvases
+          // so memory stays flat even with many documents open.
+          const leafMargin = Math.round((window.innerHeight || 900) * 1.5) + 'px';
+          const io = new IntersectionObserver((entries) => {
+            for (const en of entries) {
+              const el = en.target;
+              if (en.isIntersecting) {
+                if (!el.dataset.rendered) { el.dataset.rendered = '1'; pendingRender.add(el); }
+              } else if (el.dataset.rendered) {
+                const box = el.getBoundingClientRect();
+                const margin = (window.innerHeight || 900) * 2.5;
+                if (box.bottom < -margin || box.top > (window.innerHeight || 900) + margin) {
+                  el.replaceChildren();
+                  delete el.dataset.rendered;
+                  renderingNow.delete(el);
+                  pendingRender.delete(el);
+                }
+              }
+            }
+            pump();
+          }, { root: null, rootMargin: leafMargin });
+          placeholders.forEach((el) => io.observe(el));
+          pump();
+
+          // Listen for pinch-zoom to re-render visible pages at extra high scale
+          if (window.visualViewport) {
+            let zoomDebounce = null;
+            let lastScale = 1;
+            window.visualViewport.addEventListener('resize', () => {
+              clearTimeout(zoomDebounce);
+              zoomDebounce = setTimeout(() => {
+                const curScale = window.visualViewport.scale || 1;
+                if (curScale > 1.25 && Math.abs(curScale - lastScale) > 0.4) {
+                  lastScale = curScale;
+                  const visiblePages = placeholders.filter((el) => {
+                    const r = el.getBoundingClientRect();
+                    return r.bottom > 0 && r.top < window.innerHeight;
+                  });
+                  visiblePages.forEach((p) => {
+                    p.dataset.rendered = '1';
+                    pendingRender.add(p);
+                  });
+                  pump();
+                }
+              }, 400);
+            });
           }
         } else if (docKind === 'pptx') {
           if (!docBase64) throw new Error('No PPTX data');
@@ -963,8 +1128,111 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     });
   </script>
 </body>
-</html>
-  `;
+</html>`;
+}
+
+export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPositionChange }) => {
+  const webViewRef = useRef<any>(null);
+  const iframeRef = useRef<any>(null);
+  const themeColors = THEMES[settings.theme];
+
+  // Recents/bookmarks persist without huge base64 payloads, so a doc opened
+  // again after a restart may lack its data -- re-read it from the device
+  // (content:// or file://) once so the reader still shows content.
+  const [dataOverride, setDataOverride] = useState<string | undefined>(undefined);
+
+  const effectiveDoc = useMemo(
+    () => (dataOverride && dataOverride !== doc.base64Data ? { ...doc, base64Data: dataOverride } : doc),
+    [doc, dataOverride]
+  );
+
+  useEffect(() => {
+    setDataOverride(undefined);
+    if (Platform.OS === 'web') return;
+    if (doc.base64Data) return;
+    const uri = doc.uri || '';
+    const readable = uri.startsWith('content://') || (uri.startsWith('file://') && doc.kind !== 'image');
+    if (!readable) return;
+    let dead = false;
+    void (async () => {
+      try {
+        const { StorageAccessFramework } = FileSystem;
+        const data = uri.startsWith('content://') && StorageAccessFramework
+          ? await StorageAccessFramework.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
+          : await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        if (!dead && data) setDataOverride(data);
+      } catch (e) {
+        console.warn('[readspace] could not re-read file data for reader:', e);
+      }
+    })();
+    return () => {
+      dead = true;
+    };
+  }, [doc.id, doc.uri, doc.base64Data]);
+
+  // Reader HTML is memoized (expensive: inlines whole base64 payloads) so
+  // unrelated re-renders never re-serialize multi-MB strings.
+  const htmlContent = useMemo(
+    () => buildReaderHtml(effectiveDoc, settings, themeColors),
+    [effectiveDoc, settings.theme, settings.fontSize, settings.lineHeight, settings.fontFamily]
+  );
+
+  // 1. High-Performance Native Image Engine with Touch Gestures on Mobile
+  if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {
+    const imageUri = doc.base64Data
+      ? (doc.base64Data.startsWith('data:') ? doc.base64Data : `data:${doc.mime || 'image/jpeg'};base64,${doc.base64Data}`)
+      : doc.uri;
+
+    return <NativeImageViewer imageUri={imageUri || ''} name={doc.name} themeColors={themeColors} />;
+  }
+
+  // Listen for window message on Web
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleWindowMessage = (event: MessageEvent) => {
+        try {
+          const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (data?.action === 'position' && onPositionChange) {
+            onPositionChange(data.position);
+          }
+        } catch {}
+      };
+      window.addEventListener('message', handleWindowMessage);
+      return () => window.removeEventListener('message', handleWindowMessage);
+    }
+  }, [onPositionChange]);
+
+  // Send settings update
+  useEffect(() => {
+    const payload = JSON.stringify({
+      action: 'updateSettings',
+      settings: {
+        theme: settings.theme,
+        fontSize: settings.fontSize,
+        lineHeight: settings.lineHeight,
+        fontFamily: settings.fontFamily,
+      },
+    });
+
+    if (Platform.OS === 'web') {
+      if (iframeRef.current?.contentWindow) {
+        iframeRef.current.contentWindow.postMessage(payload, '*');
+      }
+    } else {
+      if (webViewRef.current?.postMessage) {
+        webViewRef.current.postMessage(payload);
+      }
+    }
+  }, [settings]);
+
+  const handleMessage = (event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.action === 'position' && onPositionChange) {
+        onPositionChange(data.position);
+      }
+    } catch {}
+  };
 
   if (Platform.OS === 'web') {
     return (

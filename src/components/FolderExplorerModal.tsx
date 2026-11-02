@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -32,7 +33,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react-native';
 import { FolderEntry, MobileDoc, WorkspaceFolder, DriveAccount, UserAccount, DocKind } from '../types';
-import { openFolderEntry, pickWorkspaceFolder, checkWorkspaceNeedReconnect, scanDirectoryUri } from '../services/folder';
+import { openFolderEntry, pickWorkspaceFolder, checkWorkspaceNeedReconnect, scanDirectoryUri, grantSubfolderPermission } from '../services/folder';
 import { Storage } from '../services/storage';
 import { Api } from '../services/api';
 import { ThemeColors } from '../theme/colors';
@@ -69,6 +70,18 @@ function getIconForKind(kind: FolderEntry['kind'], color: string) {
   }
 }
 
+function countTreeFiles(entries: FolderEntry[]): number {
+  let count = 0;
+  for (const e of entries) {
+    if (e.isDirectory) {
+      if (e.children && e.children.length > 0) count += countTreeFiles(e.children);
+    } else {
+      count++;
+    }
+  }
+  return count;
+}
+
 export interface WorkspaceExplorerViewProps {
   workspace: WorkspaceFolder | null;
   theme: ThemeColors;
@@ -94,6 +107,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
   const [openingUri, setOpeningUri] = useState<string | null>(null);
   const [expandingUri, setExpandingUri] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [failedUri, setFailedUri] = useState<string | null>(null);
   const [allWorkspaces, setAllWorkspaces] = useState<WorkspaceFolder[]>([]);
   const [needsReconnect, setNeedsReconnect] = useState(false);
   const [showCloudSync, setShowCloudSync] = useState(false);
@@ -122,66 +136,168 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
     void Storage.getWorkspaces().then(setAllWorkspaces);
   }, [workspace?.id]);
 
+  const attachChildren = (entry: FolderEntry, children: FolderEntry[]) => {
+    entry.children = children;
+    setTreeVersion((v) => v + 1);
+    if (workspace) {
+      const updatedWs = { ...workspace, entries: [...(workspace.entries || [])] };
+      onWorkspaceChanged(updatedWs);
+      void Storage.saveWorkspace(updatedWs);
+    }
+  };
+
+  const loadChildrenFor = async (entry: FolderEntry): Promise<FolderEntry[]> => {
+    if (entry.isDrive || entry.driveFileId || entry.uri?.startsWith('gdrive://')) {
+      const folderId = entry.driveFileId || entry.uri.replace('gdrive://', '');
+      const files = await Api.listDriveFiles(folderId);
+      const children: FolderEntry[] = files.map((item) => {
+        const isDir = item.mimeType === 'application/vnd.google-apps.folder' || item.mimeType?.includes('folder');
+        const ext = (item.name || '').split('.').pop()?.toLowerCase() || '';
+        let kind: DocKind | undefined = undefined;
+        if (!isDir) {
+          if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext) || item.mimeType?.startsWith('image/')) kind = 'image';
+          else if (ext === 'pdf' || item.mimeType?.includes('pdf') || item.mimeType?.includes('google-apps.document') || item.mimeType?.includes('google-apps.presentation')) kind = 'pdf';
+          else if (ext === 'docx' || item.mimeType?.includes('wordprocessingml')) kind = 'docx';
+          else if (ext === 'pptx' || item.mimeType?.includes('presentationml')) kind = 'pptx';
+          else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || item.mimeType?.startsWith('audio/')) kind = 'audio';
+          else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext) || item.mimeType?.startsWith('video/')) kind = 'video';
+          else if (ext === 'md' || ext === 'markdown') kind = 'markdown';
+          else kind = 'text';
+        }
+        return {
+          name: item.name,
+          uri: `gdrive://${item.id}`,
+          isDirectory: isDir,
+          size: item.size ? Number(item.size) : undefined,
+          mimeType: item.mimeType,
+          kind,
+          driveFileId: item.id,
+          isDrive: true,
+          workspaceId: entry.workspaceId,
+        };
+      });
+      return children;
+    }
+
+    const subEntries = await scanDirectoryUri(entry.uri, 0);
+    return subEntries || [];
+  };
+
+
   const toggleDir = async (uri: string, entry?: FolderEntry) => {
     const willOpen = !expanded[uri];
     setExpanded((prev) => ({ ...prev, [uri]: willOpen }));
+    if (failedUri === uri) setFailedUri(null);
 
-    if (willOpen && entry && (entry.isDrive || entry.driveFileId || entry.uri?.startsWith('gdrive://')) && (!entry.children || entry.children.length === 0)) {
-      const folderId = entry.driveFileId || entry.uri.replace('gdrive://', '');
+    if (
+      willOpen &&
+      entry &&
+      entry.isDirectory &&
+      (!entry.children || entry.children.length === 0)
+    ) {
+      setExpandingUri(uri);
       try {
-        const files = await Api.listDriveFiles(folderId);
-        const children: FolderEntry[] = files.map((item) => {
-          const isDir = item.mimeType === 'application/vnd.google-apps.folder' || item.mimeType?.includes('folder');
-          const ext = (item.name || '').split('.').pop()?.toLowerCase() || '';
-          let kind: DocKind | undefined = undefined;
-          if (!isDir) {
-            if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext) || item.mimeType?.startsWith('image/')) kind = 'image';
-            else if (ext === 'pdf' || item.mimeType?.includes('pdf') || item.mimeType?.includes('google-apps.document') || item.mimeType?.includes('google-apps.presentation')) kind = 'pdf';
-            else if (ext === 'docx' || item.mimeType?.includes('wordprocessingml')) kind = 'docx';
-            else if (ext === 'pptx' || item.mimeType?.includes('presentationml')) kind = 'pptx';
-            else if (['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(ext) || item.mimeType?.startsWith('audio/')) kind = 'audio';
-            else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext) || item.mimeType?.startsWith('video/')) kind = 'video';
-            else if (ext === 'md' || ext === 'markdown') kind = 'markdown';
-            else kind = 'text';
-          }
-          return {
-            name: item.name,
-            uri: `gdrive://${item.id}`,
-            isDirectory: isDir,
-            size: item.size ? Number(item.size) : undefined,
-            mimeType: item.mimeType,
-            kind,
-            driveFileId: item.id,
-            isDrive: true,
-            workspaceId: entry.workspaceId,
-          };
-        });
-        entry.children = children;
-        setTreeVersion((v) => v + 1);
-        if (workspace) {
-          const updatedWs = { ...workspace, entries: [...(workspace.entries || [])] };
-          onWorkspaceChanged(updatedWs);
-          void Storage.saveWorkspace(updatedWs);
-        }
-      } catch (e) {
-        console.warn('Could not load subfolder files in explorer:', e);
-      }
-    } else if (willOpen && entry && entry.isDirectory && !entry.isDrive && (!entry.children || entry.children.length === 0)) {
-      setExpandingUri(entry.uri);
-      try {
-        const subEntries = await scanDirectoryUri(entry.uri, 0);
-        entry.children = subEntries;
-        setTreeVersion((v) => v + 1);
-        if (workspace) {
-          const updatedWs = { ...workspace, entries: [...(workspace.entries || [])] };
-          onWorkspaceChanged(updatedWs);
-          void Storage.saveWorkspace(updatedWs);
-        }
-      } catch (e) {
-        console.warn('Could not load local subfolder in explorer:', e);
+        const children = await loadChildrenFor(entry);
+        attachChildren(entry, children);
+      } catch (e: any) {
+        console.warn('Could not load subfolder in explorer:', uri, e);
+        setFailedUri(uri);
       } finally {
         setExpandingUri(null);
       }
+    }
+  };
+
+  const retryScanDir = async (entry: FolderEntry) => {
+    setFailedUri(null);
+    setExpandingUri(entry.uri);
+    try {
+      const children = await loadChildrenFor(entry);
+      if (children && children.length > 0) {
+        attachChildren(entry, children);
+        setExpanded((prev) => ({ ...prev, [entry.uri]: true }));
+        return;
+      }
+
+      // If empty on Android SAF, offer direct sub-folder permission grant
+      if (Platform.OS === 'android' && !entry.isDrive) {
+        Alert.alert(
+          `Open "${entry.name}"`,
+          'Android requires storage access permission to browse files in this sub-folder. Would you like to select and open this subfolder?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Grant Permission',
+              onPress: async () => {
+                setExpandingUri(entry.uri);
+                try {
+                  const res = await grantSubfolderPermission(entry.uri);
+                  if (res && res.entries) {
+                    entry.uri = res.directoryUri;
+                    attachChildren(entry, res.entries);
+                    setExpanded((prev) => ({
+                      ...prev,
+                      [entry.uri]: true,
+                      [res.directoryUri]: true,
+                    }));
+                  }
+                } catch (err) {
+                  console.warn('Subfolder permission grant failed:', err);
+                } finally {
+                  setExpandingUri(null);
+                }
+              },
+            },
+          ]
+        );
+        return;
+      }
+
+      attachChildren(entry, []);
+      setExpanded((prev) => ({ ...prev, [entry.uri]: true }));
+    } catch (e: any) {
+      console.warn('Retry failed for subfolder in explorer:', entry.uri, e);
+      if (Platform.OS === 'android' && !entry.isDrive) {
+        Alert.alert(
+          `Open "${entry.name}"`,
+          'Android requires storage access permission to browse files in this sub-folder. Would you like to select and open this subfolder?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Grant Permission',
+              onPress: async () => {
+                setExpandingUri(entry.uri);
+                try {
+                  const res = await grantSubfolderPermission(entry.uri);
+                  if (res && res.entries) {
+                    entry.uri = res.directoryUri;
+                    attachChildren(entry, res.entries);
+                    setExpanded((prev) => ({
+                      ...prev,
+                      [entry.uri]: true,
+                      [res.directoryUri]: true,
+                    }));
+                  }
+                } catch (err) {
+                  console.warn('Subfolder permission grant failed:', err);
+                } finally {
+                  setExpandingUri(null);
+                }
+              },
+            },
+          ]
+        );
+      } else {
+        setFailedUri(entry.uri);
+        Alert.alert(
+          'Cannot Open Sub-folder',
+          entry.isDrive || entry.uri?.startsWith('gdrive://')
+            ? 'Google Drive returned an error for this folder. Check your connection and Drive authorization, then retry.'
+            : 'This folder is empty or inaccessible.'
+        );
+      }
+    } finally {
+      setExpandingUri(null);
     }
   };
 
@@ -271,7 +387,30 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
 
       const saved = await Storage.getWorkspaces();
       const updated = saved.find((w) => w.id === workspace.id);
-      if (updated) {
+      let rescanned = false;
+
+      // LOCAL: actually re-scan the granted directory URI so genuinely new
+      // files & sub-folders appear (previously this only re-loaded the saved
+      // snapshot, so Refresh never picked up changes).
+      if (updated?.uri && (updated.uri.startsWith('content://') || updated.uri.startsWith('file://'))) {
+        try {
+          const entries = await scanDirectoryUri(updated.uri, 0);
+          if (entries.length > 0) {
+            const refreshed: WorkspaceFolder = {
+              ...updated,
+              entries,
+              fileCount: countTreeFiles(entries),
+            };
+            onWorkspaceChanged(refreshed);
+            await Storage.saveWorkspace(refreshed);
+            rescanned = true;
+          }
+        } catch (scanErr) {
+          console.warn('Local workspace rescan failed, falling back to saved state:', scanErr);
+        }
+      }
+
+      if (!rescanned && updated) {
         onWorkspaceChanged(updated);
         void checkWorkspaceNeedReconnect(updated).then(setNeedsReconnect);
       }
@@ -369,9 +508,33 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
                 <Text style={[styles.childCount, { color: theme.textMuted }]}>{childCount}</Text>
               )}
             </TouchableOpacity>
-            {isOpen && entry.children && (
+            {isOpen && (
               <View style={[styles.treeBranch, { borderLeftColor: theme.border + '60', marginLeft: 16 + depth * 16 }]}>
-                {renderTree(entry.children, depth + 1)}
+                {Array.isArray(entry.children) && entry.children.length > 0
+                  ? renderTree(entry.children, depth + 1)
+                  : null}
+                {!isExpanding && (!Array.isArray(entry.children) || entry.children.length === 0) && (
+                  <TouchableOpacity
+                    style={styles.emptyFolderRow}
+                    onPress={() => void retryScanDir(entry)}
+                    activeOpacity={0.7}
+                  >
+                    <AlertCircle size={12} color={failedUri === entry.uri ? '#ef4444' : theme.textMuted} />
+                    <Text
+                      style={[
+                        styles.emptyFolderText,
+                        { color: failedUri === entry.uri ? '#ef4444' : theme.textMuted },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {failedUri === entry.uri
+                        ? 'Could not load — tap to grant permission / retry'
+                        : Platform.OS === 'android' && !entry.isDrive
+                        ? 'Tap to open sub-folder & view contents'
+                        : 'Empty folder — tap to rescan'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
           </View>
@@ -752,6 +915,18 @@ const styles = StyleSheet.create({
   scrim: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
+  },
+  emptyFolderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 7,
+    paddingLeft: 10,
+    paddingRight: 12,
+  },
+  emptyFolderText: {
+    fontSize: 11.5,
+    fontStyle: 'italic',
   },
   drawerHeader: {
     paddingHorizontal: 14,

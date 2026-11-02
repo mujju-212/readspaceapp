@@ -15,6 +15,33 @@ const KEYS = {
   SESSION_TOKEN: 'rs_mobile_session_token_v1',
 };
 
+/**
+ * AsyncStorage on Android fails silently above ~2MB per value. If several docs
+ * keep their base64 payloads the whole recents list writes can start to throw,
+ * which previously killed the activity feed too (it used to be written after
+ * the docs). Keep a small per-doc and total budget so the store always fits.
+ */
+const MAX_PERSISTED_BASE64_CHARS = 300_000; // ~220KB decoded per document
+const BASE64_TOTAL_BUDGET_CHARS = 900_000; // newest documents get priority
+
+/**
+ * Persist the recent-docs list with a safety chain: 1) write with the
+ * base64 budget applied; 2) if Android's per-value limit rejects that, retry
+ * with every base64 payload dropped so recents are never silently lost.
+ */
+async function persistDocsList(docs: MobileDoc[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.DOCS, JSON.stringify(Storage.stripOversized(docs).slice(0, 100)));
+  } catch (e) {
+    try {
+      const light = docs.slice(0, 100).map((d) => (d.base64Data ? { ...d, base64Data: undefined } : d));
+      await AsyncStorage.setItem(KEYS.DOCS, JSON.stringify(light));
+    } catch {
+      console.warn('Could not persist recent docs (storage full):', e);
+    }
+  }
+}
+
 const DEFAULT_SETTINGS: ReaderSettings = {
   theme: 'ice',
   fontSize: 16,
@@ -38,14 +65,7 @@ export const Storage = {
   },
 
   async saveDoc(doc: MobileDoc): Promise<void> {
-    const docs = await this.getDocs();
-    const existingIndex = docs.findIndex((d) => d.id === doc.id || (d.uri && d.uri === doc.uri));
-    if (existingIndex >= 0) {
-      docs[existingIndex] = { ...docs[existingIndex], ...doc, lastOpenedAt: Date.now() };
-    } else {
-      docs.unshift(doc);
-    }
-    await AsyncStorage.setItem(KEYS.DOCS, JSON.stringify(docs.slice(0, 100)));
+    // Log the open FIRST so a failed docs write can never swallow the event
     void this.addActivity({
       type: 'open_file',
       title: doc.name,
@@ -56,6 +76,20 @@ export const Storage = {
       docUri: doc.uri,
       size: doc.size,
     });
+
+    const docs = await this.getDocs();
+    const existingIndex = docs.findIndex((d) => d.id === doc.id || (d.uri && d.uri === doc.uri));
+    let next: MobileDoc[];
+    if (existingIndex >= 0) {
+      const updated = { ...docs[existingIndex], ...doc, lastOpenedAt: Date.now() };
+      // Re-opened docs move to the front so "Continue Reading"/"Recent Items"
+      // reflect the actual order of use.
+      docs.splice(existingIndex, 1);
+      next = [updated, ...docs];
+    } else {
+      next = [doc, ...docs];
+    }
+    await persistDocsList(next);
   },
 
   async removeDoc(id: string): Promise<void> {
@@ -66,12 +100,34 @@ export const Storage = {
 
   async updatePosition(id: string, position: MobileDoc['position']): Promise<void> {
     const docs = await this.getDocs();
-    const doc = docs.find((d) => d.id === id);
-    if (doc) {
+    const docIndex = docs.findIndex((d) => d.id === id);
+    if (docIndex >= 0) {
+      const doc = docs[docIndex];
       doc.position = { ...doc.position, ...position };
       doc.lastOpenedAt = Date.now();
-      await AsyncStorage.setItem(KEYS.DOCS, JSON.stringify(docs));
+      // Keep the currently-read document at the top of the recents list
+      docs.splice(docIndex, 1);
+      docs.unshift(doc);
+      await persistDocsList(docs);
     }
+  },
+
+  /** Remove base64 payloads too large for AsyncStorage before persisting.
+   *  Documents are ordered newest-first, so the budget keeps the most recent
+   *  files' content offline-available and drops it from the older ones. */
+  stripOversized(docs: MobileDoc[]): MobileDoc[] {
+    let budget = BASE64_TOTAL_BUDGET_CHARS;
+    return docs.map((d) => {
+      if (d.base64Data && d.base64Data.length) {
+        if (d.base64Data.length <= MAX_PERSISTED_BASE64_CHARS && d.base64Data.length <= budget) {
+          budget -= d.base64Data.length;
+          return d;
+        }
+        const { base64Data, ...rest } = d;
+        return { ...rest, base64Data: undefined } as MobileDoc;
+      }
+      return d;
+    });
   },
 
   // Bookmarks / Saved Files
@@ -86,9 +142,13 @@ export const Storage = {
   },
 
   async addBookmark(bookmark: Bookmark): Promise<void> {
+    // Bookmarks are only lightweight references — never persist the whole file
+    // content here, otherwise large documents make the AsyncStorage write fail
+    // and the saved list silently stays empty.
+    const { base64Data, ...lightBookmark } = bookmark;
     const all = await this.getBookmarks();
     const filtered = all.filter((b) => b.id !== bookmark.id && b.docId !== bookmark.docId);
-    filtered.unshift(bookmark);
+    filtered.unshift(lightBookmark as Bookmark);
     await AsyncStorage.setItem(KEYS.BOOKMARKS, JSON.stringify(filtered.slice(0, 100)));
     await this.addActivity({
       type: 'save_bookmark',
@@ -118,7 +178,7 @@ export const Storage = {
   },
 
   async addActivity(
-    activity: Omit<AppActivity, 'id' | 'timestamp'> & { timestamp?: number }
+    activity: Partial<Omit<AppActivity, 'id' | 'timestamp'>> & Pick<AppActivity, 'type' | 'title' | 'status'> & { timestamp?: number }
   ): Promise<void> {
     try {
       const all = await this.getActivities();
@@ -162,6 +222,12 @@ export const Storage = {
       all.unshift(link);
     }
     await AsyncStorage.setItem(KEYS.SAVED_LINKS, JSON.stringify(all));
+    void this.addActivity({
+      type: 'save_link',
+      title: link.title,
+      subtitle: `Saved link · ${link.collection || 'General'} · Google ${link.hint.toUpperCase()}`,
+      status: 'completed',
+    });
   },
 
   async removeSavedLink(id: string): Promise<void> {

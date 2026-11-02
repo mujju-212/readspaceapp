@@ -2,7 +2,7 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Home, BookOpen, ArrowUpDown, Settings as SettingsIcon } from 'lucide-react-native';
+import { Home, BookOpen, Activity as ActivityIcon, Settings as SettingsIcon } from 'lucide-react-native';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { ActivityScreen } from '../screens/ActivityScreen';
@@ -72,7 +72,7 @@ const MainTabsNavigator: React.FC<RootNavigatorProps> = ({ settings, onUpdateSet
         name="Activity"
         options={{
           tabBarLabel: 'Activity',
-          tabBarIcon: ({ color, size }) => <ArrowUpDown size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <ActivityIcon size={size} color={color} />,
         }}
       >
         {(props) => <ActivityScreen {...props} settings={settings} />}

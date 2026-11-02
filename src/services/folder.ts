@@ -150,6 +150,12 @@ export async function pickWorkspaceFolder(): Promise<WorkspaceFolder | null> {
       };
 
       await Storage.saveWorkspace(ws);
+      void Storage.addActivity({
+        type: 'open_folder',
+        title: ws.name,
+        subtitle: 'Local folder opened',
+        status: 'completed',
+      });
       return ws;
     } catch (err: any) {
       console.warn('Android SAF directory error:', err);
@@ -188,6 +194,12 @@ export async function pickWorkspaceFolder(): Promise<WorkspaceFolder | null> {
     };
 
     await Storage.saveWorkspace(ws);
+    void Storage.addActivity({
+      type: 'open_folder',
+      title: ws.name,
+      subtitle: 'Local files imported',
+      status: 'completed',
+    });
     return ws;
   } catch (err: any) {
     console.warn('Document picker fallback error:', err);
@@ -347,6 +359,67 @@ export function buildSafSubTreeUri(itemUri: string): string {
 }
 
 /**
+ * List a SAF directory's children.
+ *
+ * Expo's native readSAFDirectoryAsync uses androidx DocumentFile.fromTreeUri(),
+ * which resolves a nested document URI (tree/<root>/document/<child>) back to
+ * the TREE ROOT — so reading a sub-folder's document URI directly returns the
+ * root tree's listing over and over (the "sub-folder repeats the same folder"
+ * bug). Rewriting the child document id into its own sub-tree URI
+ * (tree/<child>) makes the provider list that folder's real children.
+ */
+async function safListChildren(dirUri: string): Promise<string[]> {
+  const subTree = buildSafSubTreeUri(dirUri);
+  const isNestedDoc = dirUri.includes('/document/');
+
+  if (isNestedDoc && subTree !== dirUri) {
+    try {
+      const viaSubtree = await StorageAccessFramework.readDirectoryAsync(subTree);
+      if (viaSubtree && viaSubtree.length > 0 && !viaSubtree.includes(dirUri)) {
+        return viaSubtree;
+      }
+    } catch (subErr) {
+      // Subtree read without separate permission may fail; fallback to direct
+    }
+  }
+
+  try {
+    const direct = await StorageAccessFramework.readDirectoryAsync(dirUri);
+    // Safety net: if the provider echoes our own URI back, that listing is
+    // bogus (root parity bug in DocumentFile 1.0.0) — treat as empty
+    return direct.includes(dirUri) ? [] : direct;
+  } catch (err) {
+    console.warn('StorageAccessFramework readDirectoryAsync error for:', dirUri, err);
+    return [];
+  }
+}
+
+/**
+ * Request SAF directory permissions for a specific sub-folder and return scanned entries
+ */
+export async function grantSubfolderPermission(
+  initialUri?: string
+): Promise<{ directoryUri: string; entries: FolderEntry[] } | null> {
+  if (Platform.OS !== 'android' || !StorageAccessFramework) {
+    return null;
+  }
+  try {
+    const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync(initialUri);
+    if (!permissions || !permissions.granted || !permissions.directoryUri) {
+      return null;
+    }
+    const entries = await scanDirectoryUri(permissions.directoryUri);
+    return {
+      directoryUri: permissions.directoryUri,
+      entries,
+    };
+  } catch (e) {
+    console.warn('Error granting subfolder permission:', e);
+    return null;
+  }
+}
+
+/**
  * Scan a directory URI safely across Android SAF, native file://, and web
  */
 export async function scanDirectoryUri(
@@ -404,24 +477,7 @@ export async function scanDirectoryUri(
   // 2. Android Storage Access Framework (SAF)
   if (StorageAccessFramework) {
     try {
-      let uris: string[] = [];
-      // First attempt: pass the directory URI directly (preserves parent tree authorization)
-      try {
-        uris = await StorageAccessFramework.readDirectoryAsync(dirUri);
-      } catch (errDirect) {
-        // Fallback: if dirUri is a sub-document URI, try transformed subTree URI
-        try {
-          const subTree = buildSafSubTreeUri(dirUri);
-          if (subTree !== dirUri) {
-            uris = await StorageAccessFramework.readDirectoryAsync(subTree);
-          } else {
-            throw errDirect;
-          }
-        } catch {
-          throw errDirect;
-        }
-      }
-
+      const uris = await safListChildren(dirUri);
       const results: FolderEntry[] = [];
 
       for (const itemUri of uris) {
@@ -433,57 +489,15 @@ export async function scanDirectoryUri(
 
         const isFile = isFileName(name);
         const isDirectory = !isFile;
-        let children: FolderEntry[] | undefined = undefined;
-
-        if (isDirectory) {
-          if (currentDepth < maxDepth) {
-            try {
-              let subUris: string[] = [];
-              try {
-                subUris = await StorageAccessFramework.readDirectoryAsync(itemUri);
-              } catch {
-                const subTree = buildSafSubTreeUri(itemUri);
-                if (subTree !== itemUri) {
-                  subUris = await StorageAccessFramework.readDirectoryAsync(subTree);
-                }
-              }
-              const isLoop =
-                subUris.length > 0 &&
-                (subUris.includes(itemUri) ||
-                  subUris.includes(dirUri) ||
-                  (uris.length > 0 && subUris.length === uris.length && subUris[0] === uris[0]));
-
-              if (isLoop) {
-                children = [];
-              } else {
-                children = subUris.map((u) => {
-                  let d = decodeURIComponent(u);
-                  let n = d.split('/').pop() || d.split('%2F').pop() || 'Item';
-                  if (n.includes(':')) n = n.split(':').pop() || n;
-                  const subIsFile = isFileName(n);
-                  return {
-                    name: n,
-                    uri: u,
-                    isDirectory: !subIsFile,
-                    kind: subIsFile ? getKindFromExt(n) : undefined,
-                    children: !subIsFile ? [] : undefined,
-                  };
-                });
-              }
-            } catch {
-              children = [];
-            }
-          } else {
-            children = undefined;
-          }
-        }
 
         results.push({
           name,
           uri: itemUri,
           isDirectory,
           kind: isDirectory ? undefined : getKindFromExt(name),
-          children,
+          // Nested contents are scanned lazily on expand (see FolderExplorerModal),
+          // so nested folders are expandable-but-unscanned.
+          children: isDirectory ? [] : undefined,
         });
       }
 

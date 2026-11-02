@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -15,8 +15,10 @@ import {
 import { LogIn, UserPlus, KeyRound, X, CheckCircle2, ShieldCheck } from 'lucide-react-native';
 import { Api } from '../services/api';
 import { Storage } from '../services/storage';
+import { sessionBus } from '../services/sessionBus';
 import { UserAccount, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
+import { GoogleAuthWebView } from './GoogleAuthWebView';
 
 interface AuthModalProps {
   visible: boolean;
@@ -103,7 +105,71 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }, 600);
   };
 
+  // Ref placed before the effects that read it
+  const closedBySession = React.useRef(false);
+
+  const [showGoogleWebView, setShowGoogleWebView] = useState(false);
+
+  // The system-browser Google flow finishes through a deep link while this
+  // modal is still open — close and refresh the signed-in UI as soon as the
+  // session reports a user.
+  useEffect(() => {
+    if (!visible || Platform.OS === 'web') return () => {};
+    const unsub = sessionBus.subscribe(async () => {
+      const user = await Storage.getUserAccount();
+      if (user && !closedBySession.current) {
+        closedBySession.current = true;
+        onSuccess(user);
+        onClose();
+      }
+    });
+    return unsub;
+  }, [visible]);
+
+  useEffect(() => {
+    if (visible) closedBySession.current = false;
+  }, [visible]);
+
+  const handleGoogleWebViewDone = async (data: { token?: string; driveConnected: boolean }) => {
+    setShowGoogleWebView(false);
+    if (data.token) {
+      await Storage.saveSessionToken(data.token);
+    }
+    const synced = await Api.syncSession();
+    if (synced.user) {
+      onSuccess(synced.user);
+      onClose();
+    } else {
+      setErrorMsg('Google sign-in finished but the session could not be verified. Try again.');
+    }
+  };
+
   const handleGoogleSignIn = async () => {
+    // Native: run Google sign-in in the SYSTEM BROWSER so the phone's own
+    // Google account chooser appears — tap your account, no password typing.
+    // The server hands the session token back via readspace://auth and the
+    // global deep-link handler completes the login inside the app.
+    if (Platform.OS !== 'web') {
+      try {
+        setLoading(true);
+        await Api.startGoogleAuth(false, (data) => {
+          setLoading(false);
+          if (data.user) {
+            onSuccess(data.user);
+            onClose();
+          }
+        });
+        setLoading(false);
+        // The browser flow continues outside the app; the sessionBus watcher
+        // closes this modal and refreshes the signed-in UI on return.
+        return;
+      } catch (e: any) {
+        setLoading(false);
+        // No browser available on the device? Fall back to the in-app window.
+        setShowGoogleWebView(true);
+        return;
+      }
+    }
     try {
       setLoading(true);
       await Api.startGoogleAuth(false, (data) => {
@@ -120,7 +186,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <>
+      {/* Native Google sign-in WebView (in-app OAuth flow). Rendered as a
+          sibling of the outer Modal — Android does not reliably show a Modal
+          nested inside another Modal. */}
+      <GoogleAuthWebView
+        visible={showGoogleWebView}
+        withDrive={false}
+        theme={theme}
+        onClose={() => setShowGoogleWebView(false)}
+        onAuthenticated={handleGoogleWebViewDone}
+      />
+
+      <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.overlay}
@@ -300,6 +378,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
+    </>
   );
 };
 

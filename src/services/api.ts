@@ -1,5 +1,6 @@
 import { Platform, Linking } from 'react-native';
 import { Storage } from './storage';
+import { sessionBus } from './sessionBus';
 import { UserAccount, DriveAccount } from '../types';
 
 const driveListClientCache = new Map<string, { files: any[]; timestamp: number }>();
@@ -90,6 +91,7 @@ export const Api = {
     await Storage.clearSessionToken();
     await Storage.saveUserAccount(null);
     await Storage.saveDriveAccount({ connected: false });
+    sessionBus.bump();
   },
 
   async getDriveStatus(): Promise<{ connected: boolean; email?: string; rootName?: string }> {
@@ -133,6 +135,21 @@ export const Api = {
         const files = data.files || [];
         driveListClientCache.set(folderId, { files, timestamp: Date.now() });
         return files;
+      }
+      // Non-OK response (expired Google token, session loss, server error):
+      // drop any cached list for this folder so the next attempt actually
+      // refetches, and on auth failure flip Drive to disconnected so the UI
+      // shows the reconnect flow instead of a stale or empty list.
+      driveListClientCache.delete(folderId);
+      if (res.status === 401 || res.status === 403) {
+        try {
+          const errData = await res.json().catch(() => ({}) as any);
+          if (errData?.needsAuth || res.status === 401) {
+            await Storage.saveDriveAccount({ connected: false });
+          }
+        } catch {
+          /* ignore body read errors */
+        }
       }
       return [];
     } catch {
@@ -219,23 +236,26 @@ export const Api = {
   },
 
   async syncSession(): Promise<{ user: UserAccount | null; drive: DriveAccount }> {
+    let userAccount: UserAccount | null = null;
     try {
       const [res, dStatus] = await Promise.all([
         this.me(),
         this.getDriveStatus(),
       ]);
-      let userAccount: UserAccount | null = null;
       let driveAccount: DriveAccount = { connected: false };
 
       if (res.user) {
-        userAccount = {
+        const next: UserAccount = {
           id: res.user.id || res.user._id,
           email: res.user.email,
           displayName: res.user.displayName || res.user.email.split('@')[0],
           avatarUrl: res.user.avatarUrl,
           hasPassword: res.user.hasPassword,
         };
+        userAccount = next;
         await Storage.saveUserAccount(userAccount);
+      } else {
+        await Storage.saveUserAccount(null);
       }
       const isConnected = Boolean(dStatus.connected || res.drive?.status === 'connected');
       driveAccount = {
@@ -243,10 +263,16 @@ export const Api = {
         email: dStatus.email || res.drive?.email,
       };
       await Storage.saveDriveAccount(driveAccount);
-      return { user: userAccount, drive: driveAccount };
+      // Never miss a sign-in that came back through a deep link: bump even on
+      // an unchanged session so subscribed screens refresh.
+      sessionBus.bump();
+      return {
+        user: userAccount ?? await Storage.getUserAccount(),
+        drive: driveAccount,
+      };
     } catch {
       return {
-        user: await Storage.getUserAccount(),
+        user: userAccount ?? await Storage.getUserAccount(),
         drive: await Storage.getDriveAccount(),
       };
     }

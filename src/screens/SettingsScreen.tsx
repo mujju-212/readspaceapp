@@ -29,11 +29,13 @@ import {
   ExternalLink,
 } from 'lucide-react-native';
 import { Storage } from '../services/storage';
+import { useSessionVersion } from '../services/sessionBus';
 import { Api } from '../services/api';
 import { UpdateService, AppUpdateInfo } from '../services/update';
 import { ReaderSettings, UserAccount, DriveAccount } from '../types';
 import { THEMES, ThemeName } from '../theme/colors';
 import { AuthModal } from '../components/AuthModal';
+import { GoogleAuthWebView } from '../components/GoogleAuthWebView';
 import { AccountSecurityModal } from '../components/AccountSecurityModal';
 
 interface SettingsScreenProps {
@@ -49,6 +51,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
   const [user, setUser] = useState<UserAccount | null>(null);
   const [drive, setDrive] = useState<DriveAccount>({ connected: false });
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showDriveAuth, setShowDriveAuth] = useState(false);
   const [showAccountSecurityModal, setShowAccountSecurityModal] = useState(false);
   const [docsCount, setDocsCount] = useState(0);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -101,11 +104,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
     setDocsCount(docs.length);
   };
 
+  const sessionVersion = useSessionVersion();
   useEffect(() => {
     loadData();
     const unsub = navigation?.addListener ? navigation.addListener('focus', loadData) : undefined;
     return unsub;
-  }, [navigation]);
+  }, [navigation, sessionVersion]);
 
   const handleSaveServerUrl = async () => {
     await Storage.setServerUrl(serverUrl);
@@ -245,17 +249,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
                         setDrive({ connected: false });
                       },
                     },
-                  ]);
-                } else {
-                  try {
-                    await Api.startGoogleAuth(true, (data) => {
-                      if (data.drive) setDrive(data.drive);
-                    });
-                  } catch (e: any) {
-                    Alert.alert('Google Auth', e?.message || 'Could not start Google Drive connection');
-                  }
-                }
-              }}
+                  ]);                } else {
+                  setShowDriveAuth(true);
+                }}}
             >
               <Text
                 style={[
@@ -444,6 +440,24 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
         onClose={() => setShowAuthModal(false)}
         onSuccess={(u) => setUser(u)}
         settings={settings}
+      />
+
+      {/* In-app Google Drive OAuth WebView */}
+      <GoogleAuthWebView
+        visible={showDriveAuth}
+        withDrive={true}
+        theme={theme}
+        onClose={() => setShowDriveAuth(false)}
+        onAuthenticated={async (data) => {
+          setShowDriveAuth(false);
+          if (data.token) await Storage.saveSessionToken(data.token);
+          const synced = await Api.syncSession();
+          if (synced.drive) {
+            setDrive(synced.drive);
+            await Storage.saveDriveAccount(synced.drive);
+          }
+          if (synced.user) setUser(synced.user);
+        }}
       />
 
       {/* Account & Security Modal */}

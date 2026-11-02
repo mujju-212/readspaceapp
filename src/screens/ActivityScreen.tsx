@@ -25,6 +25,7 @@ import {
 } from 'lucide-react-native';
 import { AppActivity, DocKind, ReaderSettings } from '../types';
 import { Storage } from '../services/storage';
+import { useSessionVersion } from '../services/sessionBus';
 import { THEMES } from '../theme/colors';
 
 interface ActivityScreenProps {
@@ -65,11 +66,12 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation, sett
     setActivities(list);
   };
 
+  const sessionVersion = useSessionVersion();
   useEffect(() => {
     loadActivities();
     const unsub = navigation.addListener('focus', loadActivities);
     return unsub;
-  }, [navigation]);
+  }, [navigation, sessionVersion]);
 
   const onRefresh = async () => {
     setRefreshing(true);

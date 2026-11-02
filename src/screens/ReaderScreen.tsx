@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft,
   SlidersHorizontal,
@@ -82,6 +82,8 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
   const [isZenMode, setIsZenMode] = useState(Boolean(settings.zen));
   const [savedSidebarState, setSavedSidebarState] = useState(sidebarOpen);
   const theme = THEMES[settings.theme];
+  const insets = useSafeAreaInsets();
+  const lastPositionSaveRef = useRef(0);
 
   // Preload recent documents to populate the tab switcher bar
   useEffect(() => {
@@ -104,6 +106,22 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
     if (tabDoc.id === currentDoc?.id) return;
     setCurrentDoc(tabDoc);
     void Storage.saveDoc(tabDoc);
+    // Keep the switcher in most-recently-used order
+    setOpenTabs((prev) =>
+      [tabDoc, ...prev.filter((t) => t.id !== tabDoc.id)].slice(0, 8)
+    );
+  };
+
+  // Central open-doc handler so files opened from the explorer sidebar also
+  // land in the "recently open" switcher (previously they were skipped,
+  // making the nav bar fall out of sync with what you were reading).
+  const openDocInReader = (newDoc: MobileDoc) => {
+    setCurrentDoc(newDoc);
+    void Storage.saveDoc(newDoc);
+    setOpenTabs((prev) => {
+      const deduped = prev.filter((t) => t.id !== newDoc.id);
+      return [newDoc, ...deduped].slice(0, 8);
+    });
   };
 
   const handleCloseTab = (e: any, tabId: string) => {
@@ -201,8 +219,14 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
     }
   }, [currentDoc?.id]);
 
+  // Scrolling fires a position message on nearly every frame — throttle the
+  // AsyncStorage write (page changes are still always saved) so long reads
+  // with several files open stay smooth.
   const handlePositionChange = (position: any) => {
     if (!currentDoc?.id) return;
+    const now = Date.now();
+    if (position?.page === undefined && now - lastPositionSaveRef.current < 700) return;
+    lastPositionSaveRef.current = now;
     Storage.updatePosition(currentDoc.id, position);
     if (currentDoc.driveFileId) {
       void Storage.getSavedLinks().then((links) => {
@@ -241,10 +265,11 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
 
   return (
     <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={[styles.safeArea, { backgroundColor: isZenMode ? theme.bg : theme.panel }]}>
-      {/* Zen Mode Floating Exit Pill */}
+      {/* Zen Mode Floating Exit Pill — anchored below the status-bar inset so it
+          can never be clipped by the notch/system bar. */}
       {isZenMode ? (
         <TouchableOpacity
-          style={[styles.zenExitBtn, { backgroundColor: theme.panel, borderColor: theme.border }]}
+          style={[styles.zenExitBtn, { backgroundColor: theme.panel, borderColor: theme.border, top: insets.top + 10 }]}
           onPress={toggleZenMode}
           activeOpacity={0.75}
           accessibilityLabel="Exit zen mode"
@@ -372,7 +397,8 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
                     <TouchableOpacity
                       style={[styles.tabCloseBtn, { backgroundColor: active ? theme.accent + '20' : 'transparent' }]}
                       onPress={(e) => handleCloseTab(e, tab.id)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                      accessibilityLabel={`Close ${tab.name}`}
                     >
                       <X size={11} color={active ? theme.accent : theme.muted} />
                     </TouchableOpacity>
@@ -406,8 +432,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
                 currentDocUri={currentDoc?.uri || currentDoc?.name}
                 onClose={() => setSidebarOpen(false)}
                 onOpenDoc={(newDoc) => {
-                  setCurrentDoc(newDoc);
-                  void Storage.saveDoc(newDoc);
+                  openDocInReader(newDoc);
                 }}
                 onWorkspaceChanged={(ws) => {
                   setActiveWorkspace(ws);
@@ -454,9 +479,8 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
             currentDocUri={currentDoc?.uri || currentDoc?.name}
             onClose={() => setSidebarOpen(false)}
             onOpenDoc={(newDoc) => {
-              setCurrentDoc(newDoc);
+              openDocInReader(newDoc);
               setSidebarOpen(false);
-              void Storage.saveDoc(newDoc);
             }}
             onWorkspaceChanged={(ws) => {
               setActiveWorkspace(ws);
@@ -646,7 +670,7 @@ const styles = StyleSheet.create({
   closeModalBtnText: { fontSize: 14, fontWeight: '700' },
   zenExitBtn: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 52 : 14,
+    top: 14,
     right: 14,
     zIndex: 99,
     borderWidth: 1,

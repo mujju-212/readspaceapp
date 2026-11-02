@@ -27,6 +27,8 @@ import { WorkspaceFolder, DriveAccount, UserAccount, FolderEntry } from '../type
 import { Api } from '../services/api';
 import { ThemeColors } from '../theme/colors';
 import { getWorkspaceBlob } from '../services/webIdb';
+import { Storage } from '../services/storage';
+import { GoogleAuthWebView } from './GoogleAuthWebView';
 import * as FileSystem from 'expo-file-system';
 
 interface CandidateItem {
@@ -276,8 +278,26 @@ export const CloudTransferModal: React.FC<CloudTransferModalProps> = ({
     }
   };
 
+  const [showDriveAuth, setShowDriveAuth] = useState(false);
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <>
+      {/* In-app Google Drive OAuth WebView (sibling, not a nested modal) */}
+      <GoogleAuthWebView
+        visible={showDriveAuth}
+        withDrive={true}
+        theme={theme}
+        onClose={() => setShowDriveAuth(false)}
+        onAuthenticated={async (data) => {
+          setShowDriveAuth(false);
+          if (data.token) await Storage.saveSessionToken(data.token);
+          const synced = await Api.syncSession();
+          if (synced.drive) await Storage.saveDriveAccount(synced.drive);
+          if (data.driveConnected && onSyncCompleted) onSyncCompleted();
+        }}
+      />
+
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={[styles.dialogCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           {/* Header */}
@@ -308,17 +328,7 @@ export const CloudTransferModal: React.FC<CloudTransferModalProps> = ({
               </Text>
               <TouchableOpacity
                 style={[styles.authActionBtn, { backgroundColor: '#10b981' }]}
-                onPress={async () => {
-                  try {
-                    await Api.startGoogleAuth(true, (data) => {
-                      if (data.drive?.connected && onSyncCompleted) {
-                        onSyncCompleted();
-                      }
-                    });
-                  } catch (e: any) {
-                    Alert.alert('Google Auth', e?.message || 'Failed to start Google sign in');
-                  }
-                }}
+                onPress={() => setShowDriveAuth(true)}
               >
                 <Cloud size={16} color="#ffffff" style={{ marginRight: 6 }} />
                 <Text style={styles.authActionText}>Authorize Google Drive (OAuth)</Text>
@@ -545,6 +555,7 @@ export const CloudTransferModal: React.FC<CloudTransferModalProps> = ({
         </View>
       </View>
     </Modal>
+    </>
   );
 };
 

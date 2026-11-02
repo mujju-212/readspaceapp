@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Modal,
   View,
@@ -21,6 +21,7 @@ import { UserAccount, ReaderSettings, DriveAccount } from '../types';
 import { THEMES } from '../theme/colors';
 import { Api } from '../services/api';
 import { Storage } from '../services/storage';
+import { GoogleAuthWebView } from './GoogleAuthWebView';
 
 interface AccountMenuModalProps {
   visible: boolean;
@@ -46,6 +47,16 @@ export const AccountMenuModal: React.FC<AccountMenuModalProps> = ({
   onSignOut,
 }) => {
   const theme = THEMES[settings.theme];
+  const [showDriveAuth, setShowDriveAuth] = useState(false);
+
+  const handleDriveConnected = async (data: { token?: string; driveConnected: boolean }) => {
+    setShowDriveAuth(false);
+    if (data.token) await Storage.saveSessionToken(data.token);
+    const synced = await Api.syncSession();
+    if (synced.drive) {
+      await Storage.saveDriveAccount(synced.drive);
+    }
+  };
 
   if (!user) return null;
 
@@ -83,7 +94,17 @@ export const AccountMenuModal: React.FC<AccountMenuModalProps> = ({
   const initial = (user.displayName || user.email || 'U')[0].toUpperCase();
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <>
+      {/* In-app Google Drive OAuth WebView (siblings, never nested modals) */}
+      <GoogleAuthWebView
+        visible={showDriveAuth}
+        withDrive={true}
+        theme={theme}
+        onClose={() => setShowDriveAuth(false)}
+        onAuthenticated={handleDriveConnected}
+      />
+
+      <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
         <View style={styles.anchorContainer}>
           <TouchableOpacity
@@ -159,13 +180,11 @@ export const AccountMenuModal: React.FC<AccountMenuModalProps> = ({
               ) : (
                 <TouchableOpacity
                   style={[styles.menuItem, { backgroundColor: theme.bg }]}
-                  onPress={async () => {
+                  onPress={() => {
+                    // Run the full OAuth inside the app (in-app WebView) so the
+                    // user is never bounced to the browser and stuck.
                     onClose();
-                    try {
-                      await Api.startGoogleAuth(true);
-                    } catch (e: any) {
-                      Alert.alert('Google Drive', e?.message || 'Could not start Google Drive authorization');
-                    }
+                    setTimeout(() => setShowDriveAuth(true), 250);
                   }}
                 >
                   <View style={[styles.menuIconWrap, { backgroundColor: '#10b98118' }]}>
@@ -218,7 +237,8 @@ export const AccountMenuModal: React.FC<AccountMenuModalProps> = ({
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
-    </Modal>
+      </Modal>
+    </>
   );
 };
 

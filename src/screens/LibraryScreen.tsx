@@ -37,6 +37,7 @@ import {
   ChevronRight,
 } from 'lucide-react-native';
 import { Storage } from '../services/storage';
+import { useSessionVersion } from '../services/sessionBus';
 import { pickDocuments } from '../services/picker';
 import { pickWorkspaceFolder, openFolderEntry, findFirstFileEntry, createDriveWorkspace } from '../services/folder';
 import { openDriveResource } from '../services/gdrive';
@@ -45,6 +46,7 @@ import { MobileDoc, ReaderSettings, SavedLink, WorkspaceFolder, Bookmark as Book
 import { THEMES } from '../theme/colors';
 import { OpenDriveLinkModal } from '../components/OpenDriveLinkModal';
 import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
+import { GoogleAuthWebView } from '../components/GoogleAuthWebView';
 
 interface LibraryScreenProps {
   navigation: any;
@@ -75,6 +77,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
   // Modals
   const [showDriveLinkModal, setShowDriveLinkModal] = useState(false);
   const [driveLinkSaveMode, setDriveLinkSaveMode] = useState(false);
+  const [showDriveAuth, setShowDriveAuth] = useState(false);
   const [showExplorerModal, setShowExplorerModal] = useState(false);
   const [folderLoading, setFolderLoading] = useState(false);
   const [folderLoadingMsg, setFolderLoadingMsg] = useState('Opening folder…');
@@ -105,6 +108,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
     }
   };
 
+  const sessionVersion = useSessionVersion();
   useEffect(() => {
     loadData();
     const unsub = navigation.addListener('focus', () => {
@@ -114,7 +118,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
       }
     });
     return unsub;
-  }, [navigation, route.params?.initialTab]);
+  }, [navigation, route.params?.initialTab, sessionVersion]);
 
   // Lazy load Drive files only when user switches to Drive tab
   useEffect(() => {
@@ -864,18 +868,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                 </Text>
                 <TouchableOpacity
                   style={[styles.driveConnectBtn, { backgroundColor: '#10b981' }]}
-                  onPress={async () => {
-                    try {
-                      await Api.startGoogleAuth(true, async (data) => {
-                        if (data.drive?.connected) {
-                          setDriveConnected(true);
-                          await loadData();
-                        }
-                      });
-                    } catch (e: any) {
-                      Alert.alert('Google Auth', e?.message || 'Could not start Google Drive connection');
-                    }
-                  }}
+                  onPress={() => setShowDriveAuth(true)}
                 >
                   <Cloud size={16} color="#ffffff" style={{ marginRight: 6 }} />
                   <Text style={[styles.driveConnectBtnText, { color: '#ffffff' }]}>Authorize Google Drive (OAuth)</Text>
@@ -1015,6 +1008,22 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
         onWorkspaceChanged={(ws) => {
           setActiveWorkspace(ws);
           loadData();
+        }}
+      />
+
+      {/* In-app Google Drive OAuth WebView */}
+      <GoogleAuthWebView
+        visible={showDriveAuth}
+        withDrive={true}
+        theme={theme}
+        onClose={() => setShowDriveAuth(false)}
+        onAuthenticated={async (data) => {
+          setShowDriveAuth(false);
+          if (data.token) await Storage.saveSessionToken(data.token);
+          await Api.syncSession();
+          if (data.driveConnected) await Storage.saveDriveAccount({ connected: true });
+          setDriveConnected(data.driveConnected);
+          await loadData();
         }}
       />
 

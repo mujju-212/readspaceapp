@@ -376,15 +376,22 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 
             for (let i = 1; i <= pdf.numPages; i++) {
               const page = await pdf.getPage(i);
-              const scale = 1.5;
-              const viewport = page.getViewport({ scale });
+              const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+              const crispScale = Math.max(dpr * 1.5, 2.8);
+              const viewport = page.getViewport({ scale: crispScale });
 
               const pageDiv = document.createElement('div');
               pageDiv.className = 'pdf-page';
               const canvas = document.createElement('canvas');
-              const context = canvas.getContext('2d');
+              const context = canvas.getContext('2d', { alpha: false });
+              if (context) {
+                context.imageSmoothingEnabled = true;
+                context.imageSmoothingQuality = 'high';
+              }
               canvas.height = viewport.height;
               canvas.width = viewport.width;
+              canvas.style.width = '100%';
+              canvas.style.height = 'auto';
 
               await page.render({ canvasContext: context, viewport: viewport }).promise;
               pageDiv.appendChild(canvas);

@@ -30,6 +30,7 @@ import {
   Folder,
 } from 'lucide-react-native';
 import { Storage } from '../services/storage';
+import { useSessionVersion } from '../services/sessionBus';
 import { pickDocuments } from '../services/picker';
 import { pickWorkspaceFolder, openFolderEntry, findFirstFileEntry } from '../services/folder';
 import { MobileDoc, ReaderSettings, SavedLink, UserAccount, WorkspaceFolder, DriveAccount, Bookmark as BookmarkType } from '../types';
@@ -110,11 +111,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
     }
   };
 
+  const sessionVersion = useSessionVersion();
   useEffect(() => {
     loadData();
     const unsub = navigation.addListener('focus', loadData);
     return unsub;
-  }, [navigation]);
+  }, [navigation, sessionVersion]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -189,6 +191,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
           setLoadingOverlayMsg(`Loading ${firstFile.name}…`);
           const doc = await openFolderEntry(firstFile);
           setLoadingOverlay(false);
+          void Storage.addActivity({
+            type: 'open_folder',
+            title: ws.name,
+            subtitle: 'Recent folder re-opened',
+            status: 'completed',
+          });
           navigation.navigate('Reader', { doc, workspace: ws, initialSidebarOpen: true });
           return;
         } catch (err) {

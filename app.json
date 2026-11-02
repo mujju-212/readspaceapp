@@ -48,7 +48,8 @@
     "plugins": [
       "expo-asset",
       "expo-document-picker",
-      "expo-file-system"
+      "expo-file-system",
+      "./plugins/withDocumentFileFix"
     ],
     "runtimeVersion": {
       "policy": "appVersion"
