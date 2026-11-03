@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -56,6 +56,61 @@ interface HomeScreenProps {
   navigation: any;
   settings: ReaderSettings;
 }
+
+function formatSize(bytes?: number): string {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const RecentDocItem = React.memo(function RecentDocItem({
+  doc,
+  theme,
+  onOpen,
+  onDelete,
+  timeAgoText,
+}: {
+  doc: MobileDoc;
+  theme: any;
+  onOpen: (doc: MobileDoc) => void;
+  onDelete: (id: string, name: string) => void;
+  timeAgoText: string;
+}) {
+  return (
+    <View style={[styles.docItem, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <TouchableOpacity style={styles.docItemMain} onPress={() => onOpen(doc)} activeOpacity={0.7}>
+        <View style={[styles.docKindSmall, { backgroundColor: theme.primary + '18' }]}>
+          <FileText size={18} color={theme.primary} />
+        </View>
+        <View style={styles.docItemMeta}>
+          <Text style={[styles.docItemName, { color: theme.text }]} numberOfLines={1}>
+            {doc.name}
+          </Text>
+          <View style={styles.docItemSubRow}>
+            <View style={[styles.microBadge, { backgroundColor: theme.primary + '15' }]}>
+              <Text style={[styles.microBadgeText, { color: theme.primary }]}>
+                {doc.kind.toUpperCase()}
+              </Text>
+            </View>
+            {doc.size ? (
+              <Text style={[styles.docItemSubText, { color: theme.textMuted }]}>
+                {' · '}{formatSize(doc.size)}
+              </Text>
+            ) : null}
+            <Text style={[styles.docItemSubText, { color: theme.textMuted }]}>
+              {' · '}{timeAgoText}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.deleteBtn} onPress={() => onDelete(doc.id, doc.name)}>
+        <Trash2 size={16} color={theme.textMuted} />
+      </TouchableOpacity>
+    </View>
+  );
+});
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) => {
   const [docs, setDocs] = useState<MobileDoc[]>([]);
@@ -132,9 +187,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
     setRefreshing(false);
   };
 
-  const handleOpenDoc = (doc: MobileDoc) => {
+  const handleOpenDoc = useCallback((doc: MobileDoc) => {
     navigation.navigate('Reader', { doc, workspace: activeWorkspace || undefined });
-  };
+  }, [navigation, activeWorkspace]);
 
   // Open Folder: picks a directory, loads workspace, finds first file, and opens Reader workbench
   const handleOpenFolder = async () => {
@@ -235,7 +290,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
     }
   };
 
-  const handleDeleteDoc = async (id: string, name: string) => {
+  const handleDeleteDoc = useCallback(async (id: string, name: string) => {
     Alert.alert('Remove Document', `Remove "${name}" from your recent list?`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -247,7 +302,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
         },
       },
     ]);
-  };
+  }, []);
 
   const handleDeleteWorkspace = async (id: string, name: string) => {
     Alert.alert(
@@ -318,10 +373,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
   // Continue reading item (most recently opened doc)
   const continueDoc = docs.length > 0 ? docs[0] : null;
 
-  // Filter docs for search
-  const filteredDocs = searchQuery.trim()
-    ? docs.filter((d) => d.name.toLowerCase().includes(searchQuery.trim().toLowerCase()))
-    : docs;
+  // Filter docs for search (memoized to prevent input latency)
+  const filteredDocs = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return q ? docs.filter((d) => d.name.toLowerCase().includes(q)) : docs;
+  }, [docs, searchQuery]);
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safeArea, { backgroundColor: theme.bg }]}>
@@ -699,47 +755,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
             </View>
           ) : (
             filteredDocs.map((doc) => (
-              <View
+              <RecentDocItem
                 key={doc.id}
-                style={[styles.docItem, { backgroundColor: theme.surface, borderColor: theme.border }]}
-              >
-                <TouchableOpacity
-                  style={styles.docItemMain}
-                  onPress={() => handleOpenDoc(doc)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.docKindSmall, { backgroundColor: theme.primary + '18' }]}>
-                    <FileText size={18} color={theme.primary} />
-                  </View>
-                  <View style={styles.docItemMeta}>
-                    <Text style={[styles.docItemName, { color: theme.text }]} numberOfLines={1}>
-                      {doc.name}
-                    </Text>
-                    <View style={styles.docItemSubRow}>
-                      <View style={[styles.microBadge, { backgroundColor: theme.primary + '15' }]}>
-                        <Text style={[styles.microBadgeText, { color: theme.primary }]}>
-                          {doc.kind.toUpperCase()}
-                        </Text>
-                      </View>
-                      {doc.size ? (
-                        <Text style={[styles.docItemSubText, { color: theme.textMuted }]}>
-                          {' · '}{formatSize(doc.size)}
-                        </Text>
-                      ) : null}
-                      <Text style={[styles.docItemSubText, { color: theme.textMuted }]}>
-                        {' · '}{timeAgo(doc.lastOpenedAt)}
-                      </Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.deleteBtn}
-                  onPress={() => handleDeleteDoc(doc.id, doc.name)}
-                >
-                  <Trash2 size={16} color={theme.textMuted} />
-                </TouchableOpacity>
-              </View>
+                doc={doc}
+                theme={theme}
+                onOpen={handleOpenDoc}
+                onDelete={handleDeleteDoc}
+                timeAgoText={timeAgo(doc.lastOpenedAt)}
+              />
             ))
           )}
         </View>

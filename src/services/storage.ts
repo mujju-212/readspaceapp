@@ -53,12 +53,17 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   zen: false,
 };
 
+let memoryDocsCache: MobileDoc[] | null = null;
+let saveDocsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 export const Storage = {
   // Docs
   async getDocs(): Promise<MobileDoc[]> {
+    if (memoryDocsCache !== null) return memoryDocsCache;
     try {
       const raw = await AsyncStorage.getItem(KEYS.DOCS);
-      return raw ? JSON.parse(raw) : [];
+      memoryDocsCache = raw ? JSON.parse(raw) : [];
+      return memoryDocsCache!;
     } catch {
       return [];
     }
@@ -89,16 +94,23 @@ export const Storage = {
     } else {
       next = [doc, ...docs];
     }
+    memoryDocsCache = next;
     await persistDocsList(next);
   },
 
   async removeDoc(id: string): Promise<void> {
     const docs = await this.getDocs();
     const filtered = docs.filter((d) => d.id !== id);
+    memoryDocsCache = filtered;
     await AsyncStorage.setItem(KEYS.DOCS, JSON.stringify(filtered));
   },
 
   async clearAllDocs(): Promise<void> {
+    memoryDocsCache = [];
+    if (saveDocsDebounceTimer) {
+      clearTimeout(saveDocsDebounceTimer);
+      saveDocsDebounceTimer = null;
+    }
     await AsyncStorage.removeItem(KEYS.DOCS);
   },
 
@@ -112,7 +124,14 @@ export const Storage = {
       // Keep the currently-read document at the top of the recents list
       docs.splice(docIndex, 1);
       docs.unshift(doc);
-      await persistDocsList(docs);
+      memoryDocsCache = docs;
+
+      // Debounce disk persistence to prevent native bridge saturation
+      if (saveDocsDebounceTimer) clearTimeout(saveDocsDebounceTimer);
+      saveDocsDebounceTimer = setTimeout(() => {
+        saveDocsDebounceTimer = null;
+        void persistDocsList(docs);
+      }, 1500);
     }
   },
 

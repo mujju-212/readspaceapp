@@ -292,15 +292,52 @@ const NativeImageViewer: React.FC<{
   );
 };
 
+function getRequiredVendorBundles(kind?: string) {
+  switch (kind) {
+    case 'pdf':
+      return [OFFLINE_PDFJS_B64];
+    case 'markdown':
+      return [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64];
+    case 'docx':
+      return [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64];
+    case 'pptx':
+      return [OFFLINE_JSZIP_B64];
+    case 'html':
+      return [OFFLINE_DOMPURIFY_B64];
+    default:
+      // text, audio, video, image need NO third-party script bundles!
+      return [];
+  }
+}
+
+function getFallbackCdns(kind?: string) {
+  switch (kind) {
+    case 'pdf':
+      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>'];
+    case 'markdown':
+      return [
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>',
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
+      ];
+    case 'docx':
+      return [
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>',
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>',
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
+      ];
+    case 'pptx':
+      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>'];
+    case 'html':
+      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>'];
+    default:
+      return [];
+  }
+}
+
 function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: any): string {
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
-  <title>${doc.name}</title>
-  <!-- Offline-bundled document engines (Guaranteed zero-network execution) -->
+  const bundlesToRun = getRequiredVendorBundles(doc.kind);
+  const bundleScript = bundlesToRun.length > 0
+    ? `
   <script>
   (function() {
     function runBundle(b64) {
@@ -323,19 +360,21 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
         }
       }
     }
-    runBundle(${JSON.stringify(OFFLINE_MARKED_B64)});
-    runBundle(${JSON.stringify(OFFLINE_DOMPURIFY_B64)});
-    runBundle(${JSON.stringify(OFFLINE_JSZIP_B64)});
-    runBundle(${JSON.stringify(OFFLINE_MAMMOTH_B64)});
-    runBundle(${JSON.stringify(OFFLINE_PDFJS_B64)});
+    ${bundlesToRun.map((b) => `runBundle(${JSON.stringify(b)});`).join('\n    ')}
   })();
-  </script>
-  <!-- CDNs for fallback when online -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+  </script>`
+    : '';
+
+  const fallbackCdns = getFallbackCdns(doc.kind).join('\n  ');
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <title>${doc.name}</title>
+  ${bundleScript}
+  ${fallbackCdns}
   <style>
     :root {
       --bg: ${themeColors.bg};
@@ -1259,10 +1298,10 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 
   // Reader HTML is memoized (expensive: inlines whole base64 payloads) so
   // unrelated re-renders never re-serialize multi-MB strings.
-  const htmlContent = useMemo(
-    () => buildReaderHtml(effectiveDoc, settings, themeColors),
-    [effectiveDoc, settings.theme, settings.fontSize, settings.lineHeight, settings.fontFamily]
-  );
+  const htmlContent = useMemo(() => {
+    if (doc.kind === 'image' && Platform.OS !== 'web') return '';
+    return buildReaderHtml(effectiveDoc, settings, themeColors);
+  }, [doc.kind, effectiveDoc, settings.theme, settings.fontSize, settings.lineHeight, settings.fontFamily]);
 
   // 1. High-Performance Native Image Engine with Touch Gestures on Mobile
   if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -54,6 +54,59 @@ function getIconForKind(kind?: DocKind, color = '#2563eb') {
   }
 }
 
+const ActivityRowItem = React.memo(function ActivityRowItem({
+  act,
+  theme,
+  onOpen,
+  timeAgoText,
+}: {
+  act: AppActivity;
+  theme: any;
+  onOpen: (act: AppActivity) => void;
+  timeAgoText: string;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.activityCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+      onPress={() => onOpen(act)}
+      activeOpacity={act.docId || act.docUri ? 0.7 : 1}
+    >
+      <View style={[styles.typeIconBox, { backgroundColor: theme.sel }]}>
+        {act.type === 'save_bookmark' ? (
+          <Bookmark size={17} color="#f59e0b" />
+        ) : act.type === 'sync_drive' ? (
+          <Cloud size={17} color="#10b981" />
+        ) : act.type === 'open_folder' ? (
+          <FolderOpen size={17} color="#3b82f6" />
+        ) : (
+          getIconForKind(act.docKind, theme.accent)
+        )}
+      </View>
+
+      <View style={styles.activityInfo}>
+        <Text style={[styles.activityTitle, { color: theme.fg }]} numberOfLines={1}>
+          {act.title}
+        </Text>
+        <View style={styles.metaRow}>
+          <Text style={[styles.activitySub, { color: theme.muted }]}>
+            {act.subtitle || (act.type === 'save_bookmark' ? 'Saved file' : 'Opened file')}
+          </Text>
+          <Text style={[styles.dot, { color: theme.muted }]}>·</Text>
+          <Text style={[styles.activityTime, { color: theme.muted }]}>
+            {timeAgoText}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.rightBadge}>
+        {act.status === 'completed' && <CheckCircle size={14} color="#10b981" />}
+        {act.status === 'running' && <Clock size={14} color="#f59e0b" />}
+        {act.status === 'failed' && <AlertTriangle size={14} color="#ef4444" />}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
 export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation, settings }) => {
   const [activities, setActivities] = useState<AppActivity[]>([]);
   const [filter, setFilter] = useState<'all' | 'opened' | 'saved' | 'cloud'>('all');
@@ -93,7 +146,7 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation, sett
     ]);
   };
 
-  const handleOpenDoc = async (act: AppActivity) => {
+  const handleOpenDoc = useCallback(async (act: AppActivity) => {
     if (act.docId || act.docUri) {
       const docs = await Storage.getDocs();
       const doc = docs.find((d) => d.id === act.docId || d.uri === act.docUri);
@@ -111,7 +164,7 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation, sett
         });
       }
     }
-  };
+  }, [navigation]);
 
   const timeAgo = (timestamp: number) => {
     const diff = Math.max(1, Math.round((Date.now() - timestamp) / 1000));
@@ -121,12 +174,14 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation, sett
     return `${Math.floor(diff / 86400)}d ago`;
   };
 
-  const filtered = activities.filter((act) => {
-    if (filter === 'opened') return act.type === 'open_file' || act.type === 'open_folder';
-    if (filter === 'saved') return act.type === 'save_bookmark' || act.type === 'save_link';
-    if (filter === 'cloud') return act.type === 'sync_drive' || act.type === 'transfer' || act.type === 'save_link';
-    return true;
-  });
+  const filtered = useMemo(() => {
+    return activities.filter((act) => {
+      if (filter === 'opened') return act.type === 'open_file' || act.type === 'open_folder';
+      if (filter === 'saved') return act.type === 'save_bookmark' || act.type === 'save_link';
+      if (filter === 'cloud') return act.type === 'sync_drive' || act.type === 'transfer' || act.type === 'save_link';
+      return true;
+    });
+  }, [activities, filter]);
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safeArea, { backgroundColor: theme.bg }]}>
@@ -199,49 +254,15 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation, sett
               </Text>
             </View>
           ) : (
-            filtered.map((act) => {
-              return (
-                <TouchableOpacity
-                  key={act.id}
-                  style={[styles.activityCard, { backgroundColor: theme.card, borderColor: theme.border }]}
-                  onPress={() => handleOpenDoc(act)}
-                  activeOpacity={act.docId || act.docUri ? 0.7 : 1}
-                >
-                  <View style={[styles.typeIconBox, { backgroundColor: theme.sel }]}>
-                    {act.type === 'save_bookmark' ? (
-                      <Bookmark size={17} color="#f59e0b" />
-                    ) : act.type === 'sync_drive' ? (
-                      <Cloud size={17} color="#10b981" />
-                    ) : act.type === 'open_folder' ? (
-                      <FolderOpen size={17} color="#3b82f6" />
-                    ) : (
-                      getIconForKind(act.docKind, theme.accent)
-                    )}
-                  </View>
-
-                  <View style={styles.activityInfo}>
-                    <Text style={[styles.activityTitle, { color: theme.fg }]} numberOfLines={1}>
-                      {act.title}
-                    </Text>
-                    <View style={styles.metaRow}>
-                      <Text style={[styles.activitySub, { color: theme.muted }]}>
-                        {act.subtitle || (act.type === 'save_bookmark' ? 'Saved file' : 'Opened file')}
-                      </Text>
-                      <Text style={[styles.dot, { color: theme.muted }]}>·</Text>
-                      <Text style={[styles.activityTime, { color: theme.muted }]}>
-                        {timeAgo(act.timestamp)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.rightBadge}>
-                    {act.status === 'completed' && <CheckCircle size={14} color="#10b981" />}
-                    {act.status === 'running' && <Clock size={14} color="#f59e0b" />}
-                    {act.status === 'failed' && <AlertTriangle size={14} color="#ef4444" />}
-                  </View>
-                </TouchableOpacity>
-              );
-            })
+            filtered.map((act) => (
+              <ActivityRowItem
+                key={act.id}
+                act={act}
+                theme={theme}
+                onOpen={handleOpenDoc}
+                timeAgoText={timeAgo(act.timestamp)}
+              />
+            ))
           )}
         </ScrollView>
       </View>
