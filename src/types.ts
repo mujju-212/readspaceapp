@@ -13,6 +13,8 @@ export interface MobileDoc {
   kind: DocKind;
   isDrive?: boolean;
   driveFileId?: string;
+  isDownloaded?: boolean;
+  downloadedAt?: number;
   lastOpenedAt: number;
   position?: {
     page?: number;
@@ -94,6 +96,8 @@ export interface WorkspaceFolder {
   entries?: FolderEntry[];
   isDrive?: boolean;
   driveFolderId?: string;
+  isDownloaded?: boolean;
+  downloadedAt?: number;
 }
 
 export interface ParsedDriveLink {

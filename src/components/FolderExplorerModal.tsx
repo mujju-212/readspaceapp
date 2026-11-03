@@ -702,7 +702,9 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
               {workspace?.name || 'Local Folder'}
             </Text>
             <Text style={[styles.wsSubtitle, { color: theme.textMuted }]}>
-              {workspace?.isDrive
+              {workspace?.isDownloaded
+                ? `${workspace?.fileCount ?? 0} offline files • Downloaded from Drive`
+                : workspace?.isDrive
                 ? `${workspace?.fileCount ?? 0} item(s) • Google Drive Workspace`
                 : workspace?.fileCount !== undefined
                 ? `${workspace.fileCount} file(s) in workspace`
@@ -772,7 +774,7 @@ export const WorkspaceExplorerView: React.FC<WorkspaceExplorerViewProps> = ({
                     ]}
                     numberOfLines={1}
                   >
-                    {ws.name}
+                    {ws.name} {ws.isDownloaded ? '⬇️' : ''}
                   </Text>
                 </TouchableOpacity>
               );

@@ -116,6 +116,8 @@ export const DriveDownloadService = {
       mime: mimeType || 'application/octet-stream',
       kind,
       isDrive: false,
+      isDownloaded: true,
+      downloadedAt: Date.now(),
       lastOpenedAt: Date.now(),
     };
 
@@ -275,6 +277,8 @@ export const DriveDownloadService = {
       addedAt: Date.now(),
       entries: downloadedEntries,
       isDrive: false,
+      isDownloaded: true,
+      downloadedAt: Date.now(),
     };
 
     await Storage.saveWorkspace(localWs);

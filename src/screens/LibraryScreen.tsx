@@ -57,7 +57,7 @@ interface LibraryScreenProps {
 }
 
 export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route, settings }) => {
-  const [tab, setTab] = useState<'local' | 'saved' | 'drive'>(route.params?.initialTab || 'local');
+  const [tab, setTab] = useState<'local' | 'downloads' | 'saved' | 'drive'>(route.params?.initialTab || 'local');
   const [viewMode, setViewMode] = useState<'tree' | 'recent'>('tree');
   const [savedSubTab, setSavedSubTab] = useState<'files' | 'links'>('files');
   const [docs, setDocs] = useState<MobileDoc[]>([]);
@@ -467,6 +467,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
 
       setTimeout(() => {
         setDownloadModal({ visible: false, title: '', message: '' });
+        setTab('downloads');
       }, 1200);
     } catch (e: any) {
       setDownloadModal({ visible: false, title: '', message: '' });
@@ -517,7 +518,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
               });
               setTimeout(() => {
                 setDownloadModal({ visible: false, title: '', message: '' });
-                setTab('local');
+                setTab('downloads');
               }, 1500);
             } catch (err: any) {
               setDownloadModal({ visible: false, title: '', message: '' });
@@ -551,6 +552,25 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
       return matchSearch && matchKind;
     });
   }, [docs, search, filterKind]);
+
+  // Filter Downloaded Files & Workspaces from Google Drive
+  const downloadedDocs = useMemo(() => {
+    return docs.filter((d) => d.isDownloaded || d.id.startsWith('local_download_') || d.uri?.includes('/downloads/'));
+  }, [docs]);
+
+  const filteredDownloadedDocs = useMemo(() => {
+    return downloadedDocs.filter((d) => {
+      const matchSearch = !search || d.name.toLowerCase().includes(search.toLowerCase());
+      const matchKind = filterKind === 'all' || d.kind === filterKind;
+      return matchSearch && matchKind;
+    });
+  }, [downloadedDocs, search, filterKind]);
+
+  const downloadedWorkspaces = useMemo(() => {
+    return workspaces.filter((ws) => ws.isDownloaded || ws.id.startsWith('local_ws_') || ws.uri?.includes('/workspaces/'));
+  }, [workspaces]);
+
+  const downloadsCount = downloadedDocs.length + downloadedWorkspaces.length;
 
   // Filter Saved Links
   const filteredSavedLinks = useMemo(() => {
@@ -598,6 +618,15 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                 </TouchableOpacity>
               </View>
             )}
+            {tab === 'downloads' && (
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: '#10b98118', borderColor: '#10b98140' }]}
+                onPress={() => setTab('drive')}
+              >
+                <Cloud size={14} color="#10b981" />
+                <Text style={[styles.actionBtnText, { color: '#10b981' }]}>From Drive</Text>
+              </TouchableOpacity>
+            )}
             {tab === 'drive' && driveConnected && (
               <View style={{ flexDirection: 'row', gap: 6 }}>
                 <TouchableOpacity
@@ -624,18 +653,31 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
           </View>
         </View>
 
-        {/* 3-Way Segmented Control */}
+        {/* 4-Way Segmented Control */}
         <View style={[styles.segmentContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <TouchableOpacity
             style={[styles.segmentBtn, tab === 'local' && { backgroundColor: theme.primary }]}
             onPress={() => setTab('local')}
           >
-            <HardDrive size={14} color={tab === 'local' ? '#ffffff' : theme.textSecondary} />
+            <HardDrive size={13} color={tab === 'local' ? '#ffffff' : theme.textSecondary} />
             <Text
               style={[styles.segmentText, { color: tab === 'local' ? '#ffffff' : theme.textSecondary }]}
               numberOfLines={1}
             >
-              On Device
+              Device
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.segmentBtn, tab === 'downloads' && { backgroundColor: theme.primary }]}
+            onPress={() => setTab('downloads')}
+          >
+            <Download size={13} color={tab === 'downloads' ? '#ffffff' : theme.textSecondary} />
+            <Text
+              style={[styles.segmentText, { color: tab === 'downloads' ? '#ffffff' : theme.textSecondary }]}
+              numberOfLines={1}
+            >
+              Downloads{downloadsCount > 0 ? ` (${downloadsCount})` : ''}
             </Text>
           </TouchableOpacity>
 
@@ -643,7 +685,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
             style={[styles.segmentBtn, tab === 'saved' && { backgroundColor: theme.primary }]}
             onPress={() => setTab('saved')}
           >
-            <Bookmark size={14} color={tab === 'saved' ? '#ffffff' : theme.textSecondary} />
+            <Bookmark size={13} color={tab === 'saved' ? '#ffffff' : theme.textSecondary} />
             <Text
               style={[styles.segmentText, { color: tab === 'saved' ? '#ffffff' : theme.textSecondary }]}
               numberOfLines={1}
@@ -658,7 +700,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
             style={[styles.segmentBtn, tab === 'drive' && { backgroundColor: theme.primary }]}
             onPress={() => setTab('drive')}
           >
-            <Cloud size={14} color={tab === 'drive' ? '#ffffff' : theme.textSecondary} />
+            <Cloud size={13} color={tab === 'drive' ? '#ffffff' : theme.textSecondary} />
             <Text
               style={[styles.segmentText, { color: tab === 'drive' ? '#ffffff' : theme.textSecondary }]}
               numberOfLines={1}
@@ -674,7 +716,13 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
             placeholder={
-              tab === 'local' ? 'Search local files…' : tab === 'saved' ? 'Search saved links or collections…' : 'Search Drive files…'
+              tab === 'local'
+                ? 'Search local files…'
+                : tab === 'downloads'
+                ? 'Search downloaded files…'
+                : tab === 'saved'
+                ? 'Search saved links or collections…'
+                : 'Search Drive files…'
             }
             placeholderTextColor={theme.textMuted}
             value={search}
@@ -685,6 +733,45 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
         {/* TAB 1: ON DEVICE */}
         {tab === 'local' && (
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContainer}>
+            {/* Multi-workspace Switcher Carousel */}
+            {workspaces.length > 1 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                {workspaces.map((ws) => {
+                  const isActive = activeWorkspace?.id === ws.id;
+                  return (
+                    <TouchableOpacity
+                      key={ws.id}
+                      style={[
+                        {
+                          borderColor: isActive ? theme.primary : theme.border,
+                          backgroundColor: isActive ? theme.primary + '18' : theme.surface,
+                          marginRight: 8,
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 20,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          borderWidth: 1,
+                        },
+                      ]}
+                      onPress={() => setActiveWorkspace(ws)}
+                    >
+                      <Folder size={12} color={isActive ? theme.primary : theme.textMuted} style={{ marginRight: 6 }} />
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color: isActive ? theme.primary : theme.text,
+                          fontWeight: isActive ? '700' : '500',
+                        }}
+                      >
+                        {ws.name} {ws.isDownloaded ? '⬇️' : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
             {/* Active Workspace Banner */}
             {activeWorkspace && (
               <View style={[styles.workspaceBanner, { backgroundColor: '#f59e0b12', borderColor: '#f59e0b35', marginBottom: 10 }]}>
@@ -871,10 +958,17 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                           <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
                             {doc.name}
                           </Text>
-                          <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
-                            {doc.kind.toUpperCase()}
-                            {doc.size ? ` · ${(doc.size / 1024).toFixed(1)} KB` : ''}
-                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            {(doc.isDownloaded || doc.id.startsWith('local_download_')) && (
+                              <View style={[styles.microBadge, { backgroundColor: '#10b98118' }]}>
+                                <Text style={[styles.microBadgeText, { color: '#10b981' }]}>OFFLINE</Text>
+                              </View>
+                            )}
+                            <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
+                              {doc.kind.toUpperCase()}
+                              {doc.size ? ` · ${(doc.size / 1024).toFixed(1)} KB` : ''}
+                            </Text>
+                          </View>
                         </View>
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(doc)}>
@@ -884,6 +978,181 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
                   ))
                 )}
               </>
+            )}
+          </ScrollView>
+        )}
+
+        {/* TAB: DOWNLOADS (OFFLINE FILES & FOLDERS FROM DRIVE) */}
+        {tab === 'downloads' && (
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContainer}>
+            {/* Header info */}
+            <View style={{ marginBottom: 14 }}>
+              <Text style={{ fontSize: 13, color: theme.textMuted }}>
+                Files and folders saved from Google Drive for offline reading on this device.
+              </Text>
+            </View>
+
+            {/* SECTION 1: DOWNLOADED FOLDERS */}
+            {downloadedWorkspaces.length > 0 && (
+              <View style={{ marginBottom: 20 }}>
+                <Text style={[styles.sectionHeading, { color: theme.text, marginBottom: 8 }]}>
+                  Offline Folders ({downloadedWorkspaces.length})
+                </Text>
+
+                {downloadedWorkspaces.map((ws) => (
+                  <View
+                    key={ws.id}
+                    style={[
+                      styles.fileCard,
+                      {
+                        backgroundColor: theme.surface,
+                        borderColor: activeWorkspace?.id === ws.id ? theme.primary : theme.border,
+                        borderLeftWidth: 4,
+                        borderLeftColor: '#f59e0b',
+                      },
+                    ]}
+                  >
+                    <View style={styles.cardMain}>
+                      <View style={[styles.kindBadge, { backgroundColor: '#f59e0b18' }]}>
+                        <FolderOpen size={18} color="#f59e0b" />
+                      </View>
+                      <View style={styles.cardInfo}>
+                        <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
+                          {ws.name}
+                        </Text>
+                        <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
+                          {ws.fileCount || ws.entries?.length || 0} offline files • Downloaded folder
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <TouchableOpacity
+                          style={[styles.smallActionBtn, { backgroundColor: theme.primary + '18' }]}
+                          onPress={async () => {
+                            setActiveWorkspace(ws);
+                            await Storage.saveWorkspace(ws);
+                            const firstFile = findFirstFileEntry(ws.entries || []);
+                            if (firstFile) {
+                              try {
+                                const doc = await openFolderEntry(firstFile);
+                                navigation.navigate('Reader', { doc, workspace: ws, initialSidebarOpen: true });
+                                return;
+                              } catch (e) {
+                                console.warn('Could not open workspace first file:', e);
+                              }
+                            }
+                            setShowExplorerModal(true);
+                          }}
+                        >
+                          <Text style={[styles.smallActionBtnText, { color: theme.primary }]}>Open</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={{ padding: 6 }}
+                          onPress={() => {
+                            Alert.alert('Remove Offline Folder', `Remove "${ws.name}" from your offline folders?`, [
+                              { text: 'Cancel', style: 'cancel' },
+                              {
+                                text: 'Remove',
+                                style: 'destructive',
+                                onPress: async () => {
+                                  await Storage.removeWorkspace(ws.id);
+                                  const rem = await Storage.getWorkspaces();
+                                  setWorkspaces(rem);
+                                  if (activeWorkspace?.id === ws.id) {
+                                    setActiveWorkspace(rem.length > 0 ? rem[0] : null);
+                                  }
+                                },
+                              },
+                            ]);
+                          }}
+                        >
+                          <Trash2 size={16} color={theme.textMuted} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* SECTION 2: DOWNLOADED SINGLE FILES */}
+            {downloadedDocs.length > 0 && (
+              <View style={{ marginBottom: 20 }}>
+                <Text style={[styles.sectionHeading, { color: theme.text, marginBottom: 8 }]}>
+                  Offline Files ({filteredDownloadedDocs.length})
+                </Text>
+
+                {filteredDownloadedDocs.length === 0 ? (
+                  <Text style={{ color: theme.textMuted, fontStyle: 'italic', marginVertical: 8 }}>
+                    No downloaded files match "{search}".
+                  </Text>
+                ) : (
+                  filteredDownloadedDocs.map((doc) => (
+                    <View
+                      key={doc.id}
+                      style={[styles.fileCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                    >
+                      <TouchableOpacity
+                        style={styles.cardMain}
+                        onPress={() => handleOpenDoc(doc)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.kindBadge, { backgroundColor: theme.primary + '18' }]}>
+                          <FileText size={18} color={theme.primary} />
+                        </View>
+                        <View style={styles.cardInfo}>
+                          <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
+                            {doc.name}
+                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <View style={[styles.microBadge, { backgroundColor: '#10b98118' }]}>
+                              <Text style={[styles.microBadgeText, { color: '#10b981' }]}>OFFLINE</Text>
+                            </View>
+                            <View style={[styles.microBadge, { backgroundColor: theme.primary + '15' }]}>
+                              <Text style={[styles.microBadgeText, { color: theme.primary }]}>
+                                {doc.kind.toUpperCase()}
+                              </Text>
+                            </View>
+                            {doc.size ? (
+                              <Text style={[styles.fileMeta, { color: theme.textMuted }]}>
+                                {Math.round(doc.size / 1024)} KB
+                              </Text>
+                            ) : null}
+                          </View>
+                        </View>
+
+                        <TouchableOpacity
+                          style={{ padding: 8 }}
+                          onPress={(e) => {
+                            e.stopPropagation?.();
+                            handleDelete(doc);
+                          }}
+                        >
+                          <Trash2 size={16} color={theme.textMuted} />
+                        </TouchableOpacity>
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
+            )}
+
+            {/* EMPTY STATE */}
+            {downloadedWorkspaces.length === 0 && downloadedDocs.length === 0 && (
+              <View style={[styles.emptyBox, { borderColor: theme.border, marginTop: 20 }]}>
+                <Download size={36} color={theme.textMuted} />
+                <Text style={[styles.emptyTitle, { color: theme.text }]}>No Downloaded Files</Text>
+                <Text style={[styles.emptyDesc, { color: theme.textMuted }]}>
+                  You haven't downloaded any files or folders from Google Drive yet. Download files from the Drive tab for full offline reading.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.emptyBtn, { backgroundColor: theme.primary, marginTop: 14 }]}
+                  onPress={() => setTab('drive')}
+                >
+                  <Cloud size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.emptyBtnText}>Browse Google Drive</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </ScrollView>
         )}
@@ -1480,5 +1749,29 @@ const styles = StyleSheet.create({
   loadingOverlaySub: {
     fontSize: 13,
     textAlign: 'center',
+  },
+  sectionHeading: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  smallActionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  smallActionBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  microBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  microBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
 });
