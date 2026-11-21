@@ -18,6 +18,7 @@ import { THEMES } from '../theme/colors';
 import { Api } from '../services/api';
 import { Storage } from '../services/storage';
 import { getWorkspaceBlob } from '../services/webIdb';
+import { safUriToFilePath } from '../services/folder';
 import {
   OFFLINE_MARKED_B64,
   OFFLINE_DOMPURIFY_B64,
@@ -1732,7 +1733,12 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 
     // 3. Android / iOS native filesystem read
     const uri = doc.uri || '';
-    const readable = uri.startsWith('content://') || (uri.startsWith('file://') && doc.kind !== 'image' && doc.kind !== 'video' && doc.kind !== 'audio');
+    const readable =
+      Boolean(uri) &&
+      doc.kind !== 'image' &&
+      doc.kind !== 'video' &&
+      doc.kind !== 'audio';
+
     if (!readable) {
       setIsFileReading(false);
       return;
@@ -1741,10 +1747,32 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     setIsFileReading(true);
     void (async () => {
       try {
+        let readUri = uri;
+        if (Platform.OS === 'android') {
+          const direct = safUriToFilePath(uri);
+          if (direct) {
+            try {
+              const info = await FileSystem.getInfoAsync(direct);
+              if (info.exists) readUri = direct;
+            } catch {}
+          }
+        }
         const { StorageAccessFramework } = FileSystem;
-        const data = uri.startsWith('content://') && StorageAccessFramework
-          ? await StorageAccessFramework.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
-          : await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        let data: string | null = null;
+        if (readUri.startsWith('file://')) {
+          data = await FileSystem.readAsStringAsync(readUri, { encoding: FileSystem.EncodingType.Base64 });
+        } else if (readUri.startsWith('content://') && StorageAccessFramework) {
+          try {
+            data = await StorageAccessFramework.readAsStringAsync(readUri, { encoding: FileSystem.EncodingType.Base64 });
+          } catch (safErr) {
+            const direct = safUriToFilePath(readUri);
+            if (direct) {
+              data = await FileSystem.readAsStringAsync(direct, { encoding: FileSystem.EncodingType.Base64 });
+            } else {
+              throw safErr;
+            }
+          }
+        }
         if (!dead && data) {
           setDataOverride(data);
           void Storage.saveDoc({ ...doc, base64Data: data });
