@@ -563,16 +563,16 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
                   style={[
                     styles.modeCard,
                     { backgroundColor: theme.panel, borderColor: theme.border },
-                    (settings.readingMode || 'curl') === 'curl' && { borderColor: theme.accent, backgroundColor: theme.sel },
+                    (settings.readingMode || 'scroll') === 'scroll' && { borderColor: theme.accent, backgroundColor: theme.sel },
                   ]}
-                  onPress={() => onUpdateSettings({ readingMode: 'curl' })}
+                  onPress={() => onUpdateSettings({ readingMode: 'scroll' })}
                 >
-                  <BookOpen size={18} color={(settings.readingMode || 'curl') === 'curl' ? theme.accent : theme.muted} />
-                  <Text style={[styles.modeCardTitle, { color: (settings.readingMode || 'curl') === 'curl' ? theme.accent : theme.fg }]}>
-                    3D Page Curl
+                  <Scroll size={18} color={(settings.readingMode || 'scroll') === 'scroll' ? theme.accent : theme.muted} />
+                  <Text style={[styles.modeCardTitle, { color: (settings.readingMode || 'scroll') === 'scroll' ? theme.accent : theme.fg }]}>
+                    Continuous
                   </Text>
                   <Text style={[styles.modeCardDesc, { color: theme.muted }]}>
-                    Curved 3D page curl with spine crease & shadows
+                    Standard vertical continuous document scroll
                   </Text>
                 </TouchableOpacity>
 
@@ -580,16 +580,16 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
                   style={[
                     styles.modeCard,
                     { backgroundColor: theme.panel, borderColor: theme.border },
-                    settings.readingMode === 'scroll' && { borderColor: theme.accent, backgroundColor: theme.sel },
+                    settings.readingMode === 'curl' && { borderColor: theme.accent, backgroundColor: theme.sel },
                   ]}
-                  onPress={() => onUpdateSettings({ readingMode: 'scroll' })}
+                  onPress={() => onUpdateSettings({ readingMode: 'curl' })}
                 >
-                  <Scroll size={18} color={settings.readingMode === 'scroll' ? theme.accent : theme.muted} />
-                  <Text style={[styles.modeCardTitle, { color: settings.readingMode === 'scroll' ? theme.accent : theme.fg }]}>
-                    Continuous
+                  <BookOpen size={18} color={settings.readingMode === 'curl' ? theme.accent : theme.muted} />
+                  <Text style={[styles.modeCardTitle, { color: settings.readingMode === 'curl' ? theme.accent : theme.fg }]}>
+                    3D Page Curl
                   </Text>
                   <Text style={[styles.modeCardDesc, { color: theme.muted }]}>
-                    Standard vertical continuous document scroll
+                    Curved 3D page curl with spine crease & shadows
                   </Text>
                 </TouchableOpacity>
               </View>

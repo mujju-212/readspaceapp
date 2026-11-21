@@ -51,7 +51,7 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   keepAwake: true,
   backgroundAudio: true,
   zen: false,
-  readingMode: 'curl',
+  readingMode: 'scroll',
   nightLight: 0,
   textAlign: 'left',
 };
