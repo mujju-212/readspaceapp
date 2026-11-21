@@ -1033,6 +1033,52 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       sendPosition({ page: current, total: total, percentage: pct });
     }
 
+    function renderHtmlContent(contentHtml) {
+      const root = document.getElementById('root');
+      const mode = window.__readerState.mode;
+
+      if (mode === 'curl') {
+        // 3D Paginated Book Mode
+        root.innerHTML =
+          '<div class="rs-book-stage">' +
+            '<div class="rs-book-container" id="rsTextContainer">' +
+              '<div class="rs-tap-left" id="rsTapLeftText" title="Previous Page"></div>' +
+              '<div class="rs-tap-right" id="rsTapRightText" title="Next Page"></div>' +
+              '<div class="rs-page-leaf active-leaf" id="rsActiveLeaf">' +
+                '<div class="rs-page-header">' +
+                  '<span>' + escapeHtml(docName) + '</span>' +
+                  '<span>📖 ReadSpace</span>' +
+                '</div>' +
+                '<div class="rs-page-crease"></div>' +
+                '<div class="rs-paged-body" id="rsPagedBody">' +
+                  contentHtml +
+                '</div>' +
+                '<div class="rs-page-footer">' +
+                  '<span>ReadSpace 3D</span>' +
+                  '<span id="rsScrollPct">0%</span>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+
+        const pBody = document.getElementById('rsPagedBody');
+        const pctEl = document.getElementById('rsScrollPct');
+        if (pBody) {
+          pBody.onscroll = () => {
+            const max = pBody.scrollHeight - pBody.clientHeight;
+            const p = max > 0 ? Math.round((pBody.scrollTop / max) * 100) : 0;
+            if (pctEl) pctEl.textContent = p + '%';
+            updateScrubber(Math.max(1, Math.round(p / 10)), 10);
+          };
+        }
+        updateScrubber(1, 1);
+      } else {
+        // Continuous Vertical Scroll Mode (Fast, responsive, native feel)
+        root.innerHTML = '<div class="reader-body">' + contentHtml + '</div>';
+        updateScrubber(1, 1);
+      }
+    }
+
     async function renderDoc() {
       const root = document.getElementById('root');
       const mode = window.__readerState.mode;
@@ -1815,25 +1861,6 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     settings.textAlign,
   ]);
 
-  if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {
-    const imageUri = doc.base64Data
-      ? (doc.base64Data.startsWith('data:') ? doc.base64Data : `data:${doc.mime || 'image/jpeg'};base64,${doc.base64Data}`)
-      : doc.uri;
-
-    return <NativeImageViewer imageUri={imageUri || ''} name={doc.name} themeColors={themeColors} />;
-  }
-
-  if (isFileReading) {
-    return (
-      <View style={[styles.loading, { backgroundColor: themeColors.bg }]}>
-        <ActivityIndicator size="large" color={themeColors.accent} />
-        <Text style={{ marginTop: 14, color: themeColors.muted, fontSize: 13, fontWeight: '600' }}>
-          Opening {doc.name}…
-        </Text>
-      </View>
-    );
-  }
-
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const handleWindowMessage = (event: MessageEvent) => {
@@ -1882,6 +1909,25 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
       }
     } catch {}
   };
+
+  if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {
+    const imageUri = doc.base64Data
+      ? (doc.base64Data.startsWith('data:') ? doc.base64Data : `data:${doc.mime || 'image/jpeg'};base64,${doc.base64Data}`)
+      : doc.uri;
+
+    return <NativeImageViewer imageUri={imageUri || ''} name={doc.name} themeColors={themeColors} />;
+  }
+
+  if (isFileReading) {
+    return (
+      <View style={[styles.loading, { backgroundColor: themeColors.bg }]}>
+        <ActivityIndicator size="large" color={themeColors.accent} />
+        <Text style={{ marginTop: 14, color: themeColors.muted, fontSize: 13, fontWeight: '600' }}>
+          Opening {doc.name}…
+        </Text>
+      </View>
+    );
+  }
 
   if (Platform.OS === 'web') {
     return (
