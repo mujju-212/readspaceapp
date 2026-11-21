@@ -3,7 +3,7 @@
     "name": "ReadSpace",
     "slug": "readspace-app",
     "scheme": "readspace",
-    "version": "1.2.0",
+    "version": "1.2.3",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",

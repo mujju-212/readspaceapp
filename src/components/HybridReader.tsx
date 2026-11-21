@@ -1040,7 +1040,11 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       try {
         if (docKind === 'pdf') {
           if (!docBase64) {
-            root.innerHTML = '<div class="loading-spinner"><div style="font-size:32px;">📖</div><div>Loading ' + escapeHtml(docName) + '…</div></div>';
+            root.innerHTML = '<div class="loading-spinner">' +
+              '<div style="font-size:36px; margin-bottom:8px;">⚠️</div>' +
+              '<div style="font-weight:700; font-size:15px;">Could not load ' + escapeHtml(docName) + '</div>' +
+              '<div style="color:var(--muted); font-size:12px; margin-top:6px; max-width:280px; text-align:center;">Document data is empty or inaccessible from storage. Please re-open this file from your folder or file picker.</div>' +
+            '</div>';
             return;
           }
           if (typeof pdfjsLib === 'undefined') {

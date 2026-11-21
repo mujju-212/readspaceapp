@@ -13,12 +13,25 @@ export interface AppUpdateInfo {
   error?: string;
 }
 
-export const CURRENT_APP_VERSION = '1.2.0';
+export const CURRENT_APP_VERSION = '1.2.3';
 export const GITHUB_REPO = 'mujju-212/readspaceapp';
 
 export const UpdateService = {
   getCurrentVersion(): string {
     return CURRENT_APP_VERSION;
+  },
+
+  getOtaInfo(): { updateId?: string; isEmbedded: boolean; channel?: string; createdAt?: string } {
+    try {
+      return {
+        updateId: Updates.updateId || undefined,
+        isEmbedded: Boolean(Updates.isEmbeddedLaunch),
+        channel: Updates.channel || undefined,
+        createdAt: Updates.createdAt ? new Date(Updates.createdAt).toLocaleDateString() : undefined,
+      };
+    } catch {
+      return { isEmbedded: true };
+    }
   },
 
   async reloadApp(): Promise<void> {

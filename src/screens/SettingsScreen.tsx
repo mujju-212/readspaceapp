@@ -380,7 +380,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
                 <Text style={[styles.optionTitle, { color: theme.fg }]}>App Version</Text>
               </View>
               <Text style={[styles.optionDesc, { color: theme.muted }]}>
-                ReadSpace Mobile v{UpdateService.getCurrentVersion()} · Release Channel: Production
+                ReadSpace Mobile v{UpdateService.getCurrentVersion()} · Channel: Production
+                {UpdateService.getOtaInfo().updateId ? ` · OTA: ${UpdateService.getOtaInfo().updateId!.slice(0, 8)}` : ''}
               </Text>
             </View>
             <TouchableOpacity
@@ -429,7 +430,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, sett
         {/* Footer info */}
         <View style={styles.footer}>
           <Text style={[styles.versionText, { color: theme.muted }]}>
-            ReadSpace Mobile · v1.0.0 · Offline-First Engine
+            ReadSpace Mobile · v{UpdateService.getCurrentVersion()} · Offline-First Engine
           </Text>
         </View>
       </ScrollView>
