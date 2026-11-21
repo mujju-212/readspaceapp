@@ -1047,22 +1047,30 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
             '</div>';
             return;
           }
-          if (typeof pdfjsLib === 'undefined') {
+          let pdfLib = window.pdfjsLib || (typeof pdfjsLib !== 'undefined' ? pdfjsLib : null);
+          if (!pdfLib) {
             await new Promise((r) => setTimeout(r, 150));
+            pdfLib = window.pdfjsLib || (typeof pdfjsLib !== 'undefined' ? pdfjsLib : null);
           }
-          if (typeof pdfjsLib === 'undefined') {
+          if (!pdfLib) {
             root.innerHTML = '<div class="loading-spinner"><p>⚠️ PDF engine is initializing, retrying…</p></div>';
             setTimeout(renderDoc, 500);
             return;
           }
 
           try {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-          } catch(e) {}
+            if (navigator.onLine) {
+              pdfLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            } else {
+              pdfLib.GlobalWorkerOptions.workerSrc = '';
+            }
+          } catch(e) {
+            pdfLib.GlobalWorkerOptions.workerSrc = '';
+          }
 
-          const pdf = await pdfjsLib.getDocument({
+          const pdf = await pdfLib.getDocument({
             data: base64ToUint8Array(docBase64),
-            disableWorker: true,
+            disableWorker: !navigator.onLine,
             isEvalSupported: false,
           }).promise;
           window.__rsPdf = pdf;
@@ -1276,7 +1284,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
                     layer.style.lineHeight = '1';
                     wrap.appendChild(layer);
                     const textViewport = page.getViewport({ scale: (cssWidth / vp1.width) });
-                    pdfjsLib.renderTextLayer({ textContentSource: content, container: layer, viewport: textViewport });
+                    (pdfLib || window.pdfjsLib).renderTextLayer({ textContentSource: content, container: layer, viewport: textViewport });
                   }
                 } catch (e) {}
               } catch (e) {
