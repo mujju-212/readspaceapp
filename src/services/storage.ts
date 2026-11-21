@@ -51,6 +51,9 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   keepAwake: true,
   backgroundAudio: true,
   zen: false,
+  readingMode: 'curl',
+  nightLight: 0,
+  textAlign: 'left',
 };
 
 let memoryDocsCache: MobileDoc[] | null = null;

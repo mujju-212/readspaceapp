@@ -111,11 +111,14 @@ export interface ReaderSettings {
   theme: ThemeName;
   fontSize: number; // 14 - 28
   lineHeight: number; // 1.4 - 2.0
-  fontFamily: 'system' | 'serif' | 'mono';
+  fontFamily: 'system' | 'serif' | 'mono' | 'dyslexic';
   contentWidth: number; // percentage or px
   keepAwake: boolean;
   backgroundAudio: boolean;
   zen?: boolean;
+  readingMode?: 'curl' | 'scroll'; // 'curl' (3D page turn) or 'scroll' (continuous)
+  nightLight?: number; // 0 to 100 warmth percentage
+  textAlign?: 'left' | 'justify';
 }
 
 export interface TransferJob {

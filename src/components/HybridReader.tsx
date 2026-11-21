@@ -35,7 +35,7 @@ if (Platform.OS !== 'web') {
 interface HybridReaderProps {
   doc: MobileDoc;
   settings: ReaderSettings;
-  onPositionChange?: (position: { page?: number; scroll?: number; zoom?: number; time?: number }) => void;
+  onPositionChange?: (position: { page?: number; scroll?: number; zoom?: number; time?: number; total?: number; percentage?: number }) => void;
 }
 
 const NativeImageViewer: React.FC<{
@@ -100,9 +100,6 @@ const NativeImageViewer: React.FC<{
     ]).start();
   };
 
-  // Begin (or restart) a pinch gesture: snapshot distance, current scale/pan and
-  // the screen-space focal point (midpoint of the two fingers) so the zoom can
-  // be anchored around exactly where the user is pinching.
   const startPinch = (touches: any[]) => {
     const [t0, t1] = touches;
     initialDistance.current = Math.max(1, Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY));
@@ -115,7 +112,6 @@ const NativeImageViewer: React.FC<{
     isPinching.current = true;
   };
 
-  // Scale while keeping the content point under the pinch midpoint visually fixed
   const applyPinch = (touches: any[]) => {
     const [t0, t1] = touches;
     const currentDistance = Math.max(1, Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY));
@@ -124,9 +120,6 @@ const NativeImageViewer: React.FC<{
     const s0 = baseScaleOnPinch.current;
     const targetScale = Math.min(6, Math.max(1, s0 * ratio));
 
-    // For a center-anchored scale s with translation t, a content point o maps
-    // to screen o*s + t. Keeping the focal point fixed gives:
-    //   t' = t - (s' - s) * (focal - center - t) / s
     const fx = screenFocalOnPinch.current.x;
     const fy = screenFocalOnPinch.current.y;
     const bx = basePanOnPinch.current.x;
@@ -159,18 +152,15 @@ const NativeImageViewer: React.FC<{
           touchStartPoint.current = { x: touches[0].pageX, y: touches[0].pageY };
           initialPanAtTouch.current = { ...panOffset.current };
 
-          // Double tap detection
           const now = Date.now();
           if (now - lastTapTime.current < 320) {
             lastTapTime.current = 0;
-            // Swallow the pointer motion right after the double tap
             activeTouchCount.current = 0;
             touchStartPoint.current = { x: touches[0].pageX, y: touches[0].pageY };
             initialPanAtTouch.current = { ...panOffset.current };
             if (scaleNum.current > 1.3) {
               animateTo(1, 0, 0);
             } else {
-              // Zoom in anchored at the tapped point
               const s0 = Math.max(scaleNum.current, 0.001);
               const target = 2.6;
               const fx = touches[0].pageX - winWidth / 2;
@@ -191,11 +181,8 @@ const NativeImageViewer: React.FC<{
 
         if (count !== prevCount) {
           if (prevCount <= 1 && count >= 2) {
-            // Second finger landed mid-gesture — the pinch was previously dead
-            // because it was only initialized in the grant handler.
             startPinch(touches);
           } else if (prevCount >= 2 && count === 1) {
-            // Pinch ended with one finger still down — re-anchor drag on it
             isPinching.current = false;
             const remaining = touches[0];
             touchStartPoint.current = { x: remaining.pageX, y: remaining.pageY };
@@ -248,51 +235,35 @@ const NativeImageViewer: React.FC<{
       <View style={styles.imageGestureArea} {...panResponder.panHandlers}>
         <Animated.Image
           source={{ uri: imageUri }}
-          fadeDuration={0}
-          resizeMethod="scale"
           style={[
-            styles.nativeImage,
+            styles.imageHero,
             {
-              transform: [
-                { translateX: pan.x },
-                { translateY: pan.y },
-                { scale },
-              ],
+              transform: [{ scale }, { translateX: pan.x }, { translateY: pan.y }],
             },
           ]}
           resizeMode="contain"
         />
       </View>
 
-      {/* Floating Zoom & Fit Toolbar */}
-      <View style={[styles.imageToolbar, { backgroundColor: 'rgba(15, 23, 42, 0.90)', borderColor: themeColors.border }]}>
-        <TouchableOpacity style={styles.toolbarBtn} onPress={zoomOut} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.toolbarBtnText}>−</Text>
+      <View style={[styles.imageControlPill, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
+        <TouchableOpacity style={styles.imagePillBtn} onPress={zoomOut} accessibilityLabel="Zoom out">
+          <Text style={[styles.imagePillText, { color: themeColors.fg }]}>−</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity style={styles.scaleBadge} onPress={resetZoom}>
-          <Text style={styles.scaleBadgeText}>{Math.round(scaleDisplay * 100)}%</Text>
+        <TouchableOpacity style={styles.imagePillBtn} onPress={resetZoom} accessibilityLabel="Reset zoom">
+          <Text style={[styles.imagePillBadge, { color: themeColors.accent }]}>{Math.round(scaleDisplay * 100)}%</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity style={styles.toolbarBtn} onPress={zoomIn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.toolbarBtnText}>+</Text>
+        <TouchableOpacity style={styles.imagePillBtn} onPress={zoomIn} accessibilityLabel="Zoom in">
+          <Text style={[styles.imagePillText, { color: themeColors.fg }]}>+</Text>
         </TouchableOpacity>
-
-        <View style={styles.toolbarDivider} />
-
-        <TouchableOpacity style={styles.fitBtn} onPress={fitWidth}>
-          <Text style={styles.fitBtnText}>Fit Width</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.fitBtn} onPress={resetZoom}>
-          <Text style={[styles.fitBtnText, { color: '#94a3b8' }]}>Reset</Text>
+        <TouchableOpacity style={[styles.imagePillBtn, styles.imagePillBtnWide]} onPress={fitWidth} accessibilityLabel="Fit width">
+          <Text style={[styles.imagePillLabel, { color: themeColors.fg }]}>Fit</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 };
 
-function getRequiredVendorBundles(kind?: string) {
+function getRequiredVendorBundles(kind?: string): string[] {
   switch (kind) {
     case 'pdf':
       return [OFFLINE_PDFJS_B64];
@@ -305,7 +276,6 @@ function getRequiredVendorBundles(kind?: string) {
     case 'html':
       return [OFFLINE_DOMPURIFY_B64];
     default:
-      // text, audio, video, image need NO third-party script bundles!
       return [];
   }
 }
@@ -366,6 +336,8 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
     : '';
 
   const fallbackCdns = getFallbackCdns(doc.kind).join('\n  ');
+  const nightLightOpacity = ((settings.nightLight || 0) / 100) * 0.42;
+
   return `
 <!DOCTYPE html>
 <html>
@@ -379,26 +351,273 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
     :root {
       --bg: ${themeColors.bg};
       --panel: ${themeColors.panel};
+      --card: ${themeColors.card};
       --border: ${themeColors.border};
       --fg: ${themeColors.fg};
       --muted: ${themeColors.muted};
       --accent: ${themeColors.accent};
       --accent-fg: ${themeColors.accentFg};
       --pdf-bg: ${themeColors.pdfBg};
+      --sel: ${themeColors.sel};
+      --nightlight-alpha: ${nightLightOpacity};
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    body {
+    html, body {
       margin: 0;
       padding: 0;
+      width: 100%;
+      height: 100%;
       background: var(--bg);
       color: var(--fg);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: ${settings.fontSize}px;
       line-height: ${settings.lineHeight};
       overflow-x: hidden;
     }
-    
-    /* PDF Viewer */
+    body[data-font="system"] { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body[data-font="serif"] { font-family: "Merriweather", Georgia, Cambria, "Times New Roman", serif; }
+    body[data-font="mono"] { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    body[data-font="dyslexic"] { font-family: "OpenDyslexic", "Comic Sans MS", cursive, sans-serif; }
+    body[data-align="justify"] .reader-body p, body[data-align="justify"] .rs-paged-body p { text-align: justify; text-justify: inter-word; }
+    body[data-align="left"] .reader-body p, body[data-align="left"] .rs-paged-body p { text-align: left; }
+
+    /* Amber Night Light Filter (Play Books style blue-light reduction) */
+    .rs-nightlight-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-color: rgba(255, 150, 10, var(--nightlight-alpha, 0));
+      mix-blend-mode: multiply;
+      z-index: 99999;
+      transition: background-color 0.3s ease;
+    }
+
+    /* 3D Book Stage (Play Books inspired page-curl cylinder) */
+    .rs-book-stage {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      perspective: 2000px;
+      perspective-origin: 50% 50%;
+      overflow: hidden;
+      background: var(--pdf-bg);
+      user-select: none;
+      -webkit-user-select: none;
+      padding: 10px 10px 65px;
+      box-sizing: border-box;
+    }
+    .rs-book-container {
+      position: relative;
+      width: 100%;
+      max-width: 820px;
+      height: 100%;
+      background: var(--panel);
+      border-radius: 8px;
+      box-shadow: 0 16px 50px rgba(0, 0, 0, 0.28), 0 2px 10px rgba(0, 0, 0, 0.12);
+      transform-style: preserve-3d;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .rs-page-leaf {
+      position: absolute;
+      inset: 0;
+      background: #ffffff;
+      transform-origin: left center;
+      transform-style: preserve-3d;
+      transition: transform 0.48s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.4s ease;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+      border-radius: 0 6px 6px 0;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+    body[data-theme="dark"] .rs-page-leaf {
+      background: #141b2d;
+      color: #e2e8f0;
+      box-shadow: 0 0 25px rgba(255, 175, 40, 0.08), 0 8px 30px rgba(0, 0, 0, 0.6);
+    }
+    body[data-theme="sepia"] .rs-page-leaf {
+      background: #fbf0d9;
+      color: #43382a;
+    }
+    .rs-page-leaf.turned {
+      transform: rotateY(-180deg) !important;
+      pointer-events: none;
+      visibility: hidden;
+    }
+    .rs-page-leaf.active-leaf {
+      z-index: 10;
+    }
+    .rs-page-crease {
+      position: absolute;
+      top: 0; bottom: 0; left: 0;
+      width: 36px;
+      pointer-events: none;
+      background: linear-gradient(to right, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.06) 40%, rgba(255,255,255,0.08) 75%, transparent 100%);
+      z-index: 25;
+    }
+    body[data-theme="dark"] .rs-page-crease {
+      background: linear-gradient(to right, rgba(0,0,0,0.5) 0%, rgba(255,180,50,0.1) 50%, transparent 100%);
+    }
+    .rs-page-content {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      padding: 6px;
+      box-sizing: border-box;
+    }
+    .rs-page-content canvas {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .rs-page-header, .rs-page-footer {
+      padding: 8px 18px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      user-select: none;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,0.02);
+      flex-shrink: 0;
+    }
+    .rs-page-footer {
+      border-bottom: none;
+      border-top: 1px solid var(--border);
+    }
+
+    /* Tap zones for 3D page turning */
+    .rs-tap-left {
+      position: absolute;
+      top: 0; bottom: 0; left: 0;
+      width: 25%;
+      z-index: 35;
+      cursor: pointer;
+    }
+    .rs-tap-right {
+      position: absolute;
+      top: 0; bottom: 0; right: 0;
+      width: 25%;
+      z-index: 35;
+      cursor: pointer;
+    }
+    .rs-tap-center {
+      position: absolute;
+      top: 0; bottom: 0; left: 25%; right: 25%;
+      z-index: 30;
+      cursor: default;
+    }
+
+    /* Paginated markdown / text in 3D book mode */
+    .rs-paged-body {
+      height: 100%;
+      width: 100%;
+      padding: 24px 28px;
+      overflow-y: auto;
+      box-sizing: border-box;
+      font-size: inherit;
+      line-height: inherit;
+      color: inherit;
+      word-break: break-word;
+    }
+
+    /* Floating Scrubber Bar (Google Play Books SearchScrubBar style) */
+    .rs-scrub-bar {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.22);
+      z-index: 9000;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      opacity: 1;
+      max-width: 94vw;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .rs-scrub-bar.hidden-bar {
+      opacity: 0;
+      transform: translateX(-50%) translateY(28px);
+      pointer-events: none;
+    }
+    .rs-scrub-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--fg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .rs-scrub-btn:active {
+      transform: scale(0.92);
+      background: var(--accent);
+      color: var(--accent-fg);
+    }
+    .rs-scrub-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 110px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      outline: none;
+      cursor: pointer;
+    }
+    .rs-scrub-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .rs-page-pill {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      white-space: nowrap;
+      padding: 0 4px;
+      min-width: 80px;
+      text-align: center;
+    }
+    .rs-mode-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 10px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--accent-fg);
+      border: none;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    /* Standard Vertical PDF Viewer */
     .pdf-container {
       display: flex;
       flex-direction: column;
@@ -598,7 +817,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       word-break: break-all;
     }
 
-    /* Document Reader (Markdown / Text / DOCX / HTML) */
+    /* Standard Vertical Document Reader */
     .reader-body {
       padding: 20px 18px 80px;
       user-select: text;
@@ -702,12 +921,25 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
     }
   </style>
 </head>
-<body>
+<body data-font="${settings.fontFamily || 'system'}" data-align="${settings.textAlign || 'left'}" data-theme="${settings.theme}">
+  <div id="rsNightLightOverlay" class="rs-nightlight-overlay"></div>
+
   <div id="root">
     <div class="loading-spinner">
       <div style="font-size: 32px;">📖</div>
       <div>Loading ${doc.name}…</div>
     </div>
+  </div>
+
+  <!-- Interactive Floating Bottom Scrubber -->
+  <div class="rs-scrub-bar hidden-bar" id="rsScrubBar">
+    <button type="button" class="rs-scrub-btn" id="rsBtnPrev" title="Previous Page">‹</button>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+      <span class="rs-page-pill" id="rsPagePill">Page 1 of 1</span>
+      <input type="range" class="rs-scrub-slider" id="rsScrubSlider" min="1" max="1" value="1">
+    </div>
+    <button type="button" class="rs-scrub-btn" id="rsBtnNext" title="Next Page">›</button>
+    <button type="button" class="rs-mode-badge" id="rsBtnMode">${(settings.readingMode || 'curl') === 'curl' ? '📖 3D' : '📜 Scroll'}</button>
   </div>
 
   <script>
@@ -716,6 +948,17 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
     const docBase64 = ${JSON.stringify(doc.base64Data || '')};
     const docUri = ${JSON.stringify(doc.uri || '')};
     const docStreamUrl = ${JSON.stringify((doc as any).streamUrl || '')};
+
+    window.__readerState = {
+      mode: ${JSON.stringify(settings.readingMode || 'curl')},
+      page: 1,
+      total: 1,
+      nightLight: ${Number(settings.nightLight || 0)},
+      fontFamily: ${JSON.stringify(settings.fontFamily || 'system')},
+      textAlign: ${JSON.stringify(settings.textAlign || 'left')},
+      fontSize: ${Number(settings.fontSize || 16)},
+      lineHeight: ${Number(settings.lineHeight || 1.6)},
+    };
 
     function sendPosition(pos) {
       if (window.ReactNativeWebView) {
@@ -757,37 +1000,52 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
     }
 
     function escapeHtml(str) {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    function rsToast(msg) {
-      let t = document.querySelector('.rs-toast');
-      if (!t) {
-        t = document.createElement('div');
-        t.className = 'rs-toast';
-        document.body.appendChild(t);
+    let hideScrubberTimer = null;
+    function showScrubberBriefly() {
+      const bar = document.getElementById('rsScrubBar');
+      if (!bar) return;
+      bar.classList.remove('hidden-bar');
+      clearTimeout(hideScrubberTimer);
+      hideScrubberTimer = setTimeout(() => {
+        bar.classList.add('hidden-bar');
+      }, 3500);
+    }
+
+    function updateScrubber(current, total) {
+      window.__readerState.page = current;
+      window.__readerState.total = total;
+      const pill = document.getElementById('rsPagePill');
+      const slider = document.getElementById('rsScrubSlider');
+      const btnMode = document.getElementById('rsBtnMode');
+      const pct = Math.max(1, Math.min(100, Math.round((current / (total || 1)) * 100)));
+
+      if (pill) pill.textContent = 'Page ' + current + ' of ' + total + ' (' + pct + '%)';
+      if (slider) {
+        slider.min = 1;
+        slider.max = total;
+        slider.value = current;
       }
-      t.textContent = msg;
-      t.classList.add('show');
-      clearTimeout(t.__rsTimer);
-      t.__rsTimer = setTimeout(() => t.classList.remove('show'), 1900);
+      if (btnMode) {
+        btnMode.textContent = window.__readerState.mode === 'curl' ? '📖 3D' : '📜 Scroll';
+      }
+      sendPosition({ page: current, total: total, percentage: pct });
     }
 
     async function renderDoc() {
       const root = document.getElementById('root');
+      const mode = window.__readerState.mode;
 
       try {
         if (docKind === 'pdf') {
-          root.innerHTML = '<div class="pdf-container" id="pdfRoot"></div>';
-          const pdfRoot = document.getElementById('pdfRoot');
-
           if (!docBase64) {
-            pdfRoot.innerHTML = '<div style="padding:20px;">PDF loading requires file data. Please re-open.</div>';
+            root.innerHTML = '<div style="padding:20px;">PDF loading requires file data. Please re-open.</div>';
             return;
           }
-
           if (typeof pdfjsLib === 'undefined') {
-            pdfRoot.innerHTML = '<div style="padding:20px;">PDF engine could not load. Re-open once online to cache it.</div>';
+            root.innerHTML = '<div style="padding:20px;">PDF engine could not load. Re-open once online to cache it.</div>';
             return;
           }
 
@@ -803,149 +1061,215 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
 
           const pdf = await pdfjsLib.getDocument({ data: base64ToUint8Array(docBase64), disableWorker: !navigator.onLine }).promise;
           window.__rsPdf = pdf;
+          const totalPages = pdf.numPages;
 
-          // Cheap per-page placeholders first; real pages render progressively,
-          // so even huge PDFs open instantly and stay smooth while scrolling.
-          const placeholders = [];
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const pageDiv = document.createElement('div');
-            pageDiv.className = 'pdf-page';
-            pageDiv.dataset.pageNumber = String(i);
-            pdfRoot.appendChild(pageDiv);
-            placeholders.push(pageDiv);
-            (async () => {
+          if (mode === 'curl') {
+            // 3D Realistic Page-Turn Mode
+            root.innerHTML = 
+              '<div class="rs-book-stage">' +
+                '<div class="rs-book-container" id="rsBookContainer">' +
+                  '<div class="rs-tap-left" id="rsTapLeft" title="Previous Page"></div>' +
+                  '<div class="rs-tap-center" id="rsTapCenter"></div>' +
+                  '<div class="rs-tap-right" id="rsTapRight" title="Next Page"></div>' +
+                '</div>' +
+              '</div>';
+            const container = document.getElementById('rsBookContainer');
+            const leaves = [];
+
+            for (let i = 1; i <= totalPages; i++) {
+              const leaf = document.createElement('div');
+              leaf.className = 'rs-page-leaf' + (i === 1 ? ' active-leaf' : '');
+              leaf.dataset.page = String(i);
+              leaf.style.zIndex = String(totalPages - i + 1);
+
+              leaf.innerHTML = 
+                '<div class="rs-page-header">' +
+                  '<span>' + escapeHtml(docName) + '</span>' +
+                  '<span>Page ' + i + ' of ' + totalPages + '</span>' +
+                '</div>' +
+                '<div class="rs-page-crease"></div>' +
+                '<div class="rs-page-content" id="rsPdfContent_' + i + '">' +
+                  '<div style="color:var(--muted); font-size:12px;">Rendering page ' + i + '…</div>' +
+                '</div>' +
+                '<div class="rs-page-footer">' +
+                  '<span>ReadSpace 3D</span>' +
+                  '<span>' + Math.round((i / totalPages) * 100) + '%</span>' +
+                '</div>';
+              container.appendChild(leaf);
+              leaves.push(leaf);
+            }
+
+            const renderedCanvases = new Set();
+            const renderPdfPage = async (pageIndex) => {
+              if (pageIndex < 1 || pageIndex > totalPages || renderedCanvases.has(pageIndex)) return;
+              renderedCanvases.add(pageIndex);
               try {
-                const p = await pdf.getPage(i);
-                const v1 = p.getViewport({ scale: 1 });
-                pageDiv.style.aspectRatio = v1.width + ' / ' + v1.height;
-              } catch (e) { /* best effort */ }
-            })();
-          }
+                const page = await pdf.getPage(pageIndex);
+                const contentDiv = document.getElementById('rsPdfContent_' + pageIndex);
+                if (!contentDiv) return;
 
-          const renderingNow = new Set();
-          const pendingRender = new Set();
-          const pump = () => {
-            const iter = pendingRender.values();
-            let nextVal = iter.next();
-            while (renderingNow.size < 2 && nextVal && nextVal.value) {
-              pendingRender.delete(nextVal.value);
-              renderOne(nextVal.value);
-              nextVal = iter.next();
-            }
-          };
+                const vp1 = page.getViewport({ scale: 1 });
+                const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+                const containerWidth = Math.max(300, container.clientWidth - 20);
+                const scale = (containerWidth / vp1.width) * dpr;
+                const viewport = page.getViewport({ scale: scale });
 
-          const renderOne = async (pageDiv) => {
-            const num = Number(pageDiv.dataset.pageNumber);
-            renderingNow.add(pageDiv);
-            try {
-              const page = await pdf.getPage(num);
-              if (!pageDiv.isConnected) { renderingNow.delete(pageDiv); return; }
-              const vp1 = page.getViewport({ scale: 1 });
-              const cssWidth = Math.round(pageDiv.clientWidth || document.documentElement.clientWidth - 20);
-              const baseScale = cssWidth / vp1.width;
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(viewport.width);
+                canvas.height = Math.round(viewport.height);
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                contentDiv.replaceChildren(canvas);
 
-              // High-DPI crisp rendering: 3.2x+ resolution guarantees razor-sharp text on zoom
-              const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3.5);
-              const crispMultiplier = Math.max(dpr * 1.5, 3.2);
-              const renderScale = baseScale * crispMultiplier;
-              const viewport = page.getViewport({ scale: renderScale });
-
-              const wrap = document.createElement('div');
-              wrap.className = 'pdf-page-inner';
-              wrap.style.width = cssWidth + 'px';
-              wrap.style.height = Math.round(cssWidth * (vp1.height / vp1.width)) + 'px';
-              pageDiv.style.width = cssWidth + 'px';
-              const canvas = document.createElement('canvas');
-              canvas.width = Math.round(viewport.width);
-              canvas.height = Math.round(viewport.height);
-              canvas.style.width = '100%';
-              canvas.style.height = '100%';
-              wrap.appendChild(canvas);
-              pageDiv.replaceChildren(wrap);
-              pageDiv.style.aspectRatio = vp1.width + ' / ' + vp1.height;
-              const ctx = canvas.getContext('2d', { alpha: false });
-              if (ctx) {
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
+                const ctx = canvas.getContext('2d', { alpha: false });
+                if (ctx) {
+                  ctx.imageSmoothingEnabled = true;
+                  ctx.imageSmoothingQuality = 'high';
+                }
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+              } catch (e) {
+                console.warn('3d page render err', e);
               }
-              await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+            };
 
-              // Text layer aligned to baseScale makes PDF text selectable & copyable via native selection
+            let curPage = 1;
+            const updateLeaves = (targetPage) => {
+              targetPage = Math.max(1, Math.min(totalPages, targetPage));
+              curPage = targetPage;
+              leaves.forEach((l, idx) => {
+                const pNum = idx + 1;
+                if (pNum < curPage) {
+                  l.classList.add('turned');
+                  l.classList.remove('active-leaf');
+                } else if (pNum === curPage) {
+                  l.classList.remove('turned');
+                  l.classList.add('active-leaf');
+                } else {
+                  l.classList.remove('turned');
+                  l.classList.remove('active-leaf');
+                }
+              });
+              renderPdfPage(curPage);
+              renderPdfPage(curPage + 1);
+              renderPdfPage(curPage - 1);
+              updateScrubber(curPage, totalPages);
+            };
+
+            window.rsNextPage = () => {
+              if (curPage < totalPages) updateLeaves(curPage + 1);
+            };
+            window.rsPrevPage = () => {
+              if (curPage > 1) updateLeaves(curPage - 1);
+            };
+            window.rsGoToPage = (p) => updateLeaves(p);
+
+            // Tap & Touch Bindings
+            document.getElementById('rsTapLeft').onclick = () => { window.rsPrevPage(); showScrubberBriefly(); };
+            document.getElementById('rsTapRight').onclick = () => { window.rsNextPage(); showScrubberBriefly(); };
+            document.getElementById('rsTapCenter').onclick = () => showScrubberBriefly();
+
+            let touchStartX = 0;
+            let touchStartY = 0;
+            container.addEventListener('touchstart', (e) => {
+              if (e.touches.length === 1) {
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+              }
+            }, { passive: true });
+
+            container.addEventListener('touchend', (e) => {
+              if (e.changedTouches.length === 1) {
+                const dx = e.changedTouches[0].clientX - touchStartX;
+                const dy = e.changedTouches[0].clientY - touchStartY;
+                if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy)) {
+                  if (dx < 0) window.rsNextPage();
+                  else window.rsPrevPage();
+                  showScrubberBriefly();
+                }
+              }
+            }, { passive: true });
+
+            updateLeaves(1);
+          } else {
+            // Continuous Vertical Scroll Mode
+            root.innerHTML = '<div class="pdf-container" id="pdfRoot"></div>';
+            const pdfRoot = document.getElementById('pdfRoot');
+            const placeholders = [];
+
+            for (let i = 1; i <= totalPages; i++) {
+              const pageDiv = document.createElement('div');
+              pageDiv.className = 'pdf-page';
+              pageDiv.dataset.pageNumber = String(i);
+              pdfRoot.appendChild(pageDiv);
+              placeholders.push(pageDiv);
+            }
+
+            const renderOne = async (pageDiv) => {
+              const num = Number(pageDiv.dataset.pageNumber);
               try {
-                if (typeof pdfjsLib.renderTextLayer === 'function') {
-                  const content = await page.getTextContent();
-                  const layer = document.createElement('div');
-                  layer.className = 'textLayer';
-                  layer.style.position = 'absolute';
-                  layer.style.inset = '0';
-                  layer.style.overflow = 'hidden';
-                  layer.style.lineHeight = '1';
-                  wrap.appendChild(layer);
-                  const textViewport = page.getViewport({ scale: baseScale });
-                  pdfjsLib.renderTextLayer({ textContentSource: content, container: layer, viewport: textViewport });
-                }
-              } catch (e) { /* text layer is best effort */ }
-            } catch (e) {
-              console.warn('pdf page render failed', e);
-            } finally {
-              renderingNow.delete(pageDiv);
-              pump();
-            }
-          };
+                const page = await pdf.getPage(num);
+                const vp1 = page.getViewport({ scale: 1 });
+                const cssWidth = Math.round(pageDiv.clientWidth || document.documentElement.clientWidth - 20);
+                const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+                const renderScale = (cssWidth / vp1.width) * dpr;
+                const viewport = page.getViewport({ scale: renderScale });
 
-          // Lazy render pages as the user approaches them; free far-away canvases
-          // so memory stays flat even with many documents open.
-          const leafMargin = Math.round((window.innerHeight || 900) * 1.5) + 'px';
-          const io = new IntersectionObserver((entries) => {
-            for (const en of entries) {
-              const el = en.target;
-              if (en.isIntersecting) {
-                if (!el.dataset.rendered) { el.dataset.rendered = '1'; pendingRender.add(el); }
-              } else if (el.dataset.rendered) {
-                const box = el.getBoundingClientRect();
-                const margin = (window.innerHeight || 900) * 2.5;
-                if (box.bottom < -margin || box.top > (window.innerHeight || 900) + margin) {
-                  el.replaceChildren();
-                  delete el.dataset.rendered;
-                  renderingNow.delete(el);
-                  pendingRender.delete(el);
+                const wrap = document.createElement('div');
+                wrap.className = 'pdf-page-inner';
+                wrap.style.width = cssWidth + 'px';
+                wrap.style.height = Math.round(cssWidth * (vp1.height / vp1.width)) + 'px';
+                pageDiv.style.width = cssWidth + 'px';
+
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(viewport.width);
+                canvas.height = Math.round(viewport.height);
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                wrap.appendChild(canvas);
+                pageDiv.replaceChildren(wrap);
+
+                const ctx = canvas.getContext('2d', { alpha: false });
+                if (ctx) {
+                  ctx.imageSmoothingEnabled = true;
+                  ctx.imageSmoothingQuality = 'high';
+                }
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+              } catch (e) {
+                console.warn('pdf render err', e);
+              }
+            };
+
+            const io = new IntersectionObserver((entries) => {
+              for (const en of entries) {
+                if (en.isIntersecting) {
+                  renderOne(en.target);
+                  const pNum = Number(en.target.dataset.pageNumber);
+                  updateScrubber(pNum, totalPages);
                 }
               }
-            }
-            pump();
-          }, { root: null, rootMargin: leafMargin });
-          placeholders.forEach((el) => io.observe(el));
-          pump();
+            }, { rootMargin: '400px' });
+            placeholders.forEach((el) => io.observe(el));
 
-          // Listen for pinch-zoom to re-render visible pages at extra high scale
-          if (window.visualViewport) {
-            let zoomDebounce = null;
-            let lastScale = 1;
-            window.visualViewport.addEventListener('resize', () => {
-              clearTimeout(zoomDebounce);
-              zoomDebounce = setTimeout(() => {
-                const curScale = window.visualViewport.scale || 1;
-                if (curScale > 1.25 && Math.abs(curScale - lastScale) > 0.4) {
-                  lastScale = curScale;
-                  const visiblePages = placeholders.filter((el) => {
-                    const r = el.getBoundingClientRect();
-                    return r.bottom > 0 && r.top < window.innerHeight;
-                  });
-                  visiblePages.forEach((p) => {
-                    p.dataset.rendered = '1';
-                    pendingRender.add(p);
-                  });
-                  pump();
-                }
-              }, 400);
-            });
+            window.rsGoToPage = (p) => {
+              const el = placeholders[p - 1];
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            };
+            window.rsNextPage = () => {
+              const nextP = Math.min(totalPages, window.__readerState.page + 1);
+              window.rsGoToPage(nextP);
+            };
+            window.rsPrevPage = () => {
+              const prevP = Math.max(1, window.__readerState.page - 1);
+              window.rsGoToPage(prevP);
+            };
+            updateScrubber(1, totalPages);
           }
         } else if (docKind === 'pptx') {
           if (!docBase64) throw new Error('No PPTX data');
           const zip = await JSZip.loadAsync(base64ToUint8Array(docBase64));
           const slideFiles = [];
           zip.forEach((path) => {
-            const m = path.match(/^ppt\\/slides\\/slide(\\d+)\\.xml$/i);
+            const m = path.match(/^ppt\/slides\/slide(\d+)\.xml$/i);
             if (m) slideFiles.push({ path, num: parseInt(m[1], 10) });
           });
           slideFiles.sort((a, b) => a.num - b.num);
@@ -955,32 +1279,32 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
 
           for (let i = 0; i < slideFiles.length; i++) {
             const xml = await zip.file(slideFiles[i].path).async('string');
-            const doc = parser.parseFromString(xml, 'application/xml');
+            const sDoc = parser.parseFromString(xml, 'application/xml');
             let title = 'Slide ' + (i + 1);
-            const titleEl = doc.querySelector('p\\\\:sp p\\\\:ph[type="title"], p\\\\:sp p\\\\:ph[type="ctrTitle"]');
+            const titleEl = sDoc.querySelector('p\\:sp p\\:ph[type="title"], p\\:sp p\\:ph[type="ctrTitle"]');
             if (titleEl) {
-              const textEl = titleEl.closest('p\\\\:sp')?.querySelector('a\\\\:t');
+              const textEl = titleEl.closest('p\\:sp')?.querySelector('a\\:t');
               if (textEl && textEl.textContent) title = textEl.textContent.trim();
             }
 
             const bullets = [];
-            const textNodes = doc.querySelectorAll('a\\\\:p');
+            const textNodes = sDoc.querySelectorAll('a\\:p');
             textNodes.forEach(p => {
               const t = p.textContent?.trim();
               if (t && t !== title) bullets.push(t);
             });
 
-            slidesHtml += \`
-              <div class="pptx-card">
-                <h3 class="pptx-slide-title">Slide \${i + 1}: \${title}</h3>
-                <div class="pptx-bullets">
-                  \${bullets.map(b => '<div class="pptx-bullet">• ' + b + '</div>').join('')}
-                </div>
-              </div>
-            \`;
+            slidesHtml += 
+              '<div class="pptx-card">' +
+                '<h3 class="pptx-slide-title">Slide ' + (i + 1) + ': ' + escapeHtml(title) + '</h3>' +
+                '<div class="pptx-bullets">' +
+                  bullets.map(b => '<div class="pptx-bullet">• ' + escapeHtml(b) + '</div>').join('') +
+                '</div>' +
+              '</div>';
           }
 
           root.innerHTML = '<div class="pptx-container">' + slidesHtml + '</div>';
+          updateScrubber(1, Math.max(1, slideFiles.length));
         } else if (docKind === 'audio') {
           const audioUrl = docStreamUrl || docUri || (docBase64 ? 'data:audio/mpeg;base64,' + docBase64 : '');
           root.innerHTML = '<div class="audio-wrap">' +
@@ -1027,228 +1351,240 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
           root.innerHTML = '<div class="video-wrap">' +
             '<video src="' + videoUrl + '" controls playsinline autoplay style="max-width:100%; max-height:88vh; outline:none; border-radius:10px;"></video>' +
           '</div>';
-        } else if (docKind === 'image') {
-          let imgSrc = '';
-          if (docBase64) {
-            if (docBase64.startsWith('data:image/')) {
-              imgSrc = docBase64;
-            } else {
-              let mimeType = 'image/jpeg';
-              if (docBase64.indexOf('iVBORw0KGgo') === 0 || docName.match(/\.png$/i)) mimeType = 'image/png';
-              else if (docBase64.indexOf('R0lGOD') === 0 || docName.match(/\.gif$/i)) mimeType = 'image/gif';
-              else if (docBase64.indexOf('UklGR') === 0 || docName.match(/\.webp$/i)) mimeType = 'image/webp';
-              else if (docName.match(/\.svg$/i)) mimeType = 'image/svg+xml';
-              else if (docName.match(/\.bmp$/i)) mimeType = 'image/bmp';
-              else if (docName.match(/\.ico$/i)) mimeType = 'image/x-icon';
-              imgSrc = 'data:' + mimeType + ';base64,' + docBase64;
-            }
-          } else if (docUri) {
-            imgSrc = docUri;
-          }
-
-          if (!imgSrc) {
-            root.innerHTML = '<div class="loading-spinner"><p>⚠️ No image data found</p></div>';
-            return;
-          }
-
-          root.innerHTML = '<div class="image-viewer-container">' +
-            '<img src="' + imgSrc + '" alt="' + escapeHtml(docName) + '" class="responsive-image" />' +
-            '<div class="image-info-bar">' + escapeHtml(docName) + '</div>' +
-          '</div>';
-        } else if (docKind === 'docx') {
-          if (!docBase64) throw new Error('No DOCX data');
-          const res = await mammoth.convertToHtml({ arrayBuffer: base64ToUint8Array(docBase64) });
-          root.innerHTML = '<div class="reader-body">' + DOMPurify.sanitize(res.value) + '</div>';
-        } else if (docKind === 'markdown') {
-          let rawText = '';
-          if (docBase64) {
-            rawText = decodeUtf8Base64(docBase64);
-          } else if (docUri) {
-            try {
-              const res = await fetch(docUri);
-              if (res.ok) rawText = await res.text();
-            } catch (err) {
-              console.warn('Could not fetch markdown from docUri:', err);
-            }
-          }
-
-          let dirty = '';
-          var markedParser = (typeof marked !== 'undefined' ? marked : (typeof window !== 'undefined' ? window.marked : null));
-          if (markedParser && typeof markedParser.parse === 'function') {
-            dirty = markedParser.parse(rawText || '');
-          } else if (typeof markedParser === 'function') {
-            dirty = markedParser(rawText || '');
-          } else {
-            dirty = '<pre>' + escapeHtml(rawText || '') + '</pre>';
-          }
-
-          // Rewrite <embed>/<object> SVG references to <img> so they render properly
-          const pre = new DOMParser().parseFromString(dirty, 'text/html');
-          const embeds = Array.from(pre.querySelectorAll('embed[src], object[data]'));
-          if (embeds.length) {
-            for (const el of embeds) {
-              const src = el.getAttribute('src') || el.getAttribute('data') || '';
-              const type = (el.getAttribute('type') || '').toLowerCase();
-              const looksSvg = type.includes('svg') || (!type && /\.svg($|[?#])/i.test(src));
-              if (!src || !looksSvg) continue;
-              const img = pre.createElement('img');
-              img.setAttribute('src', src);
-              img.setAttribute('alt', el.getAttribute('aria-label') || el.getAttribute('title') || 'svg diagram');
-              el.replaceWith(img);
-            }
-            dirty = pre.body.innerHTML;
-          }
-
-          // Sanitizer config that keeps inline SVG renderable (draw.io/Excalidraw, foreignObject, use)
-          const MD_SANITIZE = {
-            ADD_TAGS: ['use', 'foreignObject'],
-            ADD_ATTR: ['target', 'id', 'xlink:href'],
-            HTML_INTEGRATION_POINTS: { 'annotation-xml': true, foreignobject: true, desc: true, title: true }
-          };
-          const sanitizer = (typeof DOMPurify !== 'undefined' ? DOMPurify : (typeof window !== 'undefined' ? window.DOMPurify : null));
-          const clean = (sanitizer && typeof sanitizer.sanitize === 'function') ? sanitizer.sanitize(dirty, MD_SANITIZE) : dirty;
-          const postDoc = new DOMParser().parseFromString(clean, 'text/html');
-
-          // Restrict <use> tags to only in-document fragments for security
-          postDoc.querySelectorAll('use').forEach(u => {
-            ['href', 'xlink:href'].forEach(attr => {
-              const val = u.getAttribute(attr);
-              if (val && !val.startsWith('#')) u.removeAttribute(attr);
-            });
-          });
-
-          // Scale inline SVG without explicit dimensions but with viewBox
-          postDoc.querySelectorAll('svg').forEach(s => {
-            if (!s.getAttribute('width') && !s.getAttribute('height') && s.getAttribute('viewBox')) {
-              s.setAttribute('width', '100%');
-            }
-          });
-
-          // Ensure links open in new tab
-          postDoc.querySelectorAll('a[href]').forEach(a => {
-            a.setAttribute('target', '_blank');
-            a.setAttribute('rel', 'noopener noreferrer');
-          });
-
-          root.innerHTML = '<div class="reader-body">' + postDoc.body.innerHTML + '</div>';
-        } else if (docKind === 'html') {
-          let rawHtml = '';
-          if (docBase64) {
-            rawHtml = decodeUtf8Base64(docBase64);
-          } else if (docUri) {
-            try {
-              const res = await fetch(docUri);
-              if (res.ok) rawHtml = await res.text();
-            } catch (err) {
-              console.warn('Could not fetch HTML from docUri:', err);
-            }
-          }
-
-          const sanitizer = (typeof DOMPurify !== 'undefined' ? DOMPurify : (typeof window !== 'undefined' ? window.DOMPurify : null));
-          const cleanHtml = sanitizer && typeof sanitizer.sanitize === 'function'
-            ? sanitizer.sanitize(rawHtml, {
-                ADD_TAGS: ['style', 'link', 'use', 'foreignObject', 'iframe', 'svg', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
-                ADD_ATTR: ['target', 'id', 'xlink:href', 'src', 'href', 'style', 'class', 'width', 'height', 'align', 'colspan', 'rowspan'],
-                WHOLE_DOCUMENT: false,
-              })
-            : rawHtml;
-
-          window._rawHtmlCode = rawHtml;
-          window._cleanHtmlPreview = cleanHtml;
-
-          window.switchHtmlView = function(mode) {
-            const previewEl = document.getElementById('htmlPreviewPane');
-            const codeEl = document.getElementById('htmlCodePane');
-            const btnPrev = document.getElementById('btnHtmlPreview');
-            const btnCode = document.getElementById('btnHtmlCode');
-            if (mode === 'preview') {
-              if (previewEl) previewEl.style.display = 'block';
-              if (codeEl) codeEl.style.display = 'none';
-              if (btnPrev) btnPrev.classList.add('active');
-              if (btnCode) btnCode.classList.remove('active');
-            } else {
-              if (previewEl) previewEl.style.display = 'none';
-              if (codeEl) codeEl.style.display = 'block';
-              if (btnPrev) btnPrev.classList.remove('active');
-              if (btnCode) btnCode.classList.add('active');
-            }
-          };
-
-          root.innerHTML = \`
-            <div class="reader-body">
-              <div class="html-toolbar">
-                <span style="font-size:12px; font-weight:600; color:var(--muted);">🌐 HTML Document</span>
-                <div class="html-toggle-group">
-                  <button type="button" id="btnHtmlPreview" class="html-toggle-btn active" onclick="switchHtmlView('preview')">👁️ Preview</button>
-                  <button type="button" id="btnHtmlCode" class="html-toggle-btn" onclick="switchHtmlView('code')">&lt;/&gt; Source</button>
-                </div>
-              </div>
-              <div id="htmlPreviewPane" class="html-preview-content" style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:18px; min-height:400px; overflow-x:auto;">
-                \${cleanHtml || '<div style="padding:40px; text-align:center; color:var(--muted);">Empty HTML document</div>'}
-              </div>
-              <div id="htmlCodePane" style="display:none;">
-                <pre class="reader-code" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.5; padding:16px; background:var(--panel); border:1px solid var(--border); border-radius:10px;">\${escapeHtml(rawHtml)}</pre>
-              </div>
-            </div>
-          \`;
         } else {
-          // Plain Text or Notes
-          // Guard: Detect if binary JPEG or image was incorrectly routed to plain text
-          var isImageB64 = docBase64 && (
-            docBase64.indexOf('/9j/') === 0 ||
-            docBase64.indexOf('iVBORw0KGgo') === 0 ||
-            docBase64.indexOf('R0lGOD') === 0 ||
-            docBase64.indexOf('UklGR') === 0 ||
-            docBase64.slice(0, 50).indexOf('JFIF') !== -1 ||
-            docBase64.slice(0, 50).indexOf('Exif') !== -1
-          );
-
-          if (isImageB64) {
-            var mType = 'image/jpeg';
-            if (docBase64.indexOf('iVBORw0KGgo') === 0) mType = 'image/png';
-            else if (docBase64.indexOf('R0lGOD') === 0) mType = 'image/gif';
-            else if (docBase64.indexOf('UklGR') === 0) mType = 'image/webp';
-            var imgSrc = 'data:' + mType + ';base64,' + docBase64;
-            root.innerHTML = '<div class="image-viewer-container">' +
-              '<img src="' + imgSrc + '" alt="' + escapeHtml(docName) + '" class="responsive-image" />' +
-              '<div class="image-info-bar">' + escapeHtml(docName) + '</div>' +
-            '</div>';
-            return;
-          }
-
-          let rawText = '';
-          if (docBase64) {
-            rawText = decodeUtf8Base64(docBase64);
-            if (rawText && (rawText.indexOf('JFIF') !== -1 || rawText.indexOf('Exif') !== -1)) {
-              var imgSrc2 = 'data:image/jpeg;base64,' + docBase64;
-              root.innerHTML = '<div class="image-viewer-container">' +
-                '<img src="' + imgSrc2 + '" alt="' + escapeHtml(docName) + '" class="responsive-image" />' +
-                '<div class="image-info-bar">' + escapeHtml(docName) + '</div>' +
-              '</div>';
-              return;
+          // Document Reader: Markdown / DOCX / HTML / Text
+          let rawHtml = '';
+          if (docKind === 'docx') {
+            if (!docBase64) throw new Error('No DOCX data');
+            const res = await mammoth.convertToHtml({ arrayBuffer: base64ToUint8Array(docBase64) });
+            rawHtml = DOMPurify.sanitize(res.value);
+          } else if (docKind === 'markdown') {
+            let rawText = '';
+            if (docBase64) {
+              rawText = decodeUtf8Base64(docBase64);
+            } else if (docUri) {
+              try {
+                const res = await fetch(docUri);
+                if (res.ok) rawText = await res.text();
+              } catch {}
             }
-          } else if (docUri) {
-            try {
-              const res = await fetch(docUri);
-              if (res.ok) rawText = await res.text();
-            } catch {}
+            var markedParser = (typeof marked !== 'undefined' ? marked : (typeof window !== 'undefined' ? window.marked : null));
+            let dirty = '';
+            if (markedParser && typeof markedParser.parse === 'function') {
+              dirty = markedParser.parse(rawText || '');
+            } else if (typeof markedParser === 'function') {
+              dirty = markedParser(rawText || '');
+            } else {
+              dirty = '<pre>' + escapeHtml(rawText || '') + '</pre>';
+            }
+            rawHtml = (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) ? DOMPurify.sanitize(dirty) : dirty;
+          } else if (docKind === 'html') {
+            let str = '';
+            if (docBase64) str = decodeUtf8Base64(docBase64);
+            else if (docUri) {
+              try {
+                const res = await fetch(docUri);
+                if (res.ok) str = await res.text();
+              } catch {}
+            }
+            rawHtml = (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) ? DOMPurify.sanitize(str) : str;
+          } else {
+            // Text / Plain
+            let str = '';
+            if (docBase64) str = decodeUtf8Base64(docBase64);
+            else if (docUri) {
+              try {
+                const res = await fetch(docUri);
+                if (res.ok) str = await res.text();
+              } catch {}
+            }
+            rawHtml = '<pre style="white-space:pre-wrap; font-family:inherit; line-height:inherit;">' + escapeHtml(str) + '</pre>';
           }
-          root.innerHTML = '<div class="reader-body"><pre style="white-space: pre-wrap; font-family: inherit; font-size: inherit; line-height: inherit;">' + escapeHtml(rawText) + '</pre></div>';
+
+          if (mode === 'curl') {
+            // 3D Paginated Book Mode for Text / Markdown / DOCX
+            // Split content into readable chunks (~300 words)
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = rawHtml;
+            const nodes = Array.from(tempDiv.children);
+            const pages = [];
+            let currentBlock = [];
+            let currentWordCount = 0;
+
+            if (nodes.length === 0) {
+              pages.push(rawHtml);
+            } else {
+              for (const n of nodes) {
+                const text = n.textContent || '';
+                const words = text.trim().split(/\s+/).length;
+                currentBlock.push(n.outerHTML);
+                currentWordCount += words;
+
+                if (currentWordCount >= 280 || n.tagName === 'H1' || n.tagName === 'HR') {
+                  pages.push(currentBlock.join(''));
+                  currentBlock = [];
+                  currentWordCount = 0;
+                }
+              }
+              if (currentBlock.length > 0) {
+                pages.push(currentBlock.join(''));
+              }
+            }
+
+            const totalPages = Math.max(1, pages.length);
+            root.innerHTML = 
+              '<div class="rs-book-stage">' +
+                '<div class="rs-book-container" id="rsTextContainer">' +
+                  '<div class="rs-tap-left" id="rsTapLeftText" title="Previous Page"></div>' +
+                  '<div class="rs-tap-center" id="rsTapCenterText"></div>' +
+                  '<div class="rs-tap-right" id="rsTapRightText" title="Next Page"></div>' +
+                '</div>' +
+              '</div>';
+            const container = document.getElementById('rsTextContainer');
+            const leaves = [];
+
+            pages.forEach((pageHtml, idx) => {
+              const pNum = idx + 1;
+              const leaf = document.createElement('div');
+              leaf.className = 'rs-page-leaf' + (pNum === 1 ? ' active-leaf' : '');
+              leaf.dataset.page = String(pNum);
+              leaf.style.zIndex = String(totalPages - pNum + 1);
+
+              leaf.innerHTML = 
+                '<div class="rs-page-header">' +
+                  '<span>' + escapeHtml(docName) + '</span>' +
+                  '<span>Page ' + pNum + ' of ' + totalPages + '</span>' +
+                '</div>' +
+                '<div class="rs-page-crease"></div>' +
+                '<div class="rs-paged-body">' +
+                  pageHtml +
+                '</div>' +
+                '<div class="rs-page-footer">' +
+                  '<span>ReadSpace 3D</span>' +
+                  '<span>' + Math.round((pNum / totalPages) * 100) + '%</span>' +
+                '</div>';
+              container.appendChild(leaf);
+              leaves.push(leaf);
+            });
+
+            let curPage = 1;
+            const updateTextLeaves = (targetPage) => {
+              curPage = Math.max(1, Math.min(totalPages, targetPage));
+              leaves.forEach((l, idx) => {
+                const pNum = idx + 1;
+                if (pNum < curPage) {
+                  l.classList.add('turned');
+                  l.classList.remove('active-leaf');
+                } else if (pNum === curPage) {
+                  l.classList.remove('turned');
+                  l.classList.add('active-leaf');
+                } else {
+                  l.classList.remove('turned');
+                  l.classList.remove('active-leaf');
+                }
+              });
+              updateScrubber(curPage, totalPages);
+            };
+
+            window.rsNextPage = () => updateTextLeaves(curPage + 1);
+            window.rsPrevPage = () => updateTextLeaves(curPage - 1);
+            window.rsGoToPage = (p) => updateTextLeaves(p);
+
+            document.getElementById('rsTapLeftText').onclick = () => { window.rsPrevPage(); showScrubberBriefly(); };
+            document.getElementById('rsTapRightText').onclick = () => { window.rsNextPage(); showScrubberBriefly(); };
+            document.getElementById('rsTapCenterText').onclick = () => showScrubberBriefly();
+
+            let touchStartX = 0;
+            container.addEventListener('touchstart', (e) => {
+              if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
+            }, { passive: true });
+            container.addEventListener('touchend', (e) => {
+              if (e.changedTouches.length === 1) {
+                const dx = e.changedTouches[0].clientX - touchStartX;
+                if (Math.abs(dx) > 42) {
+                  if (dx < 0) window.rsNextPage();
+                  else window.rsPrevPage();
+                  showScrubberBriefly();
+                }
+              }
+            }, { passive: true });
+
+            updateTextLeaves(1);
+          } else {
+            // Continuous Vertical Scroll Mode
+            root.innerHTML = '<div class="reader-body">' + rawHtml + '</div>';
+            updateScrubber(1, 1);
+          }
         }
       } catch (e) {
         root.innerHTML = '<div class="loading-spinner"><p>⚠️ Unable to render: ' + e.message + '</p></div>';
       }
     }
 
-    renderDoc();
+    // Scrubber Bar Event Bindings
+    document.getElementById('rsBtnPrev').onclick = () => {
+      if (window.rsPrevPage) window.rsPrevPage();
+      showScrubberBriefly();
+    };
+    document.getElementById('rsBtnNext').onclick = () => {
+      if (window.rsNextPage) window.rsNextPage();
+      showScrubberBriefly();
+    };
+    document.getElementById('rsScrubSlider').oninput = (e) => {
+      const p = Number(e.target.value);
+      if (window.rsGoToPage) window.rsGoToPage(p);
+      showScrubberBriefly();
+    };
+    document.getElementById('rsBtnMode').onclick = () => {
+      window.__readerState.mode = window.__readerState.mode === 'curl' ? 'scroll' : 'curl';
+      renderDoc();
+      showScrubberBriefly();
+    };
 
+    // Keyboard support
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') {
+        if (window.rsNextPage) window.rsNextPage();
+        showScrubberBriefly();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        if (window.rsPrevPage) window.rsPrevPage();
+        showScrubberBriefly();
+      }
+    });
+
+    renderDoc();
+    setTimeout(() => showScrubberBriefly(), 800);
+
+    // Dynamic settings listener
     window.addEventListener('message', (event) => {
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         if (data.action === 'updateSettings') {
           const s = data.settings;
-          document.body.style.fontSize = s.fontSize + 'px';
-          document.body.style.lineHeight = s.lineHeight;
+          if (s.fontSize) document.body.style.fontSize = s.fontSize + 'px';
+          if (s.lineHeight) document.body.style.lineHeight = s.lineHeight;
+          if (s.fontFamily) document.body.dataset.font = s.fontFamily;
+          if (s.textAlign) document.body.dataset.align = s.textAlign;
+          if (s.theme) document.body.dataset.theme = s.theme;
+
+          if (s.nightLight !== undefined) {
+            window.__readerState.nightLight = s.nightLight;
+            const overlay = document.getElementById('rsNightLightOverlay');
+            if (overlay) {
+              overlay.style.backgroundColor = 'rgba(255, 150, 10, ' + ((s.nightLight / 100) * 0.42) + ')';
+            }
+          }
+
+          if (s.readingMode && s.readingMode !== window.__readerState.mode) {
+            window.__readerState.mode = s.readingMode;
+            renderDoc();
+          }
+        } else if (data.action === 'nextPage') {
+          if (window.rsNextPage) window.rsNextPage();
+        } else if (data.action === 'prevPage') {
+          if (window.rsPrevPage) window.rsPrevPage();
+        } else if (data.action === 'goToPage') {
+          if (window.rsGoToPage) window.rsGoToPage(data.page);
         }
       } catch {}
     });
@@ -1262,9 +1598,6 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
   const iframeRef = useRef<any>(null);
   const themeColors = THEMES[settings.theme];
 
-  // Recents/bookmarks persist without huge base64 payloads, so a doc opened
-  // again after a restart may lack its data -- re-read it from the device
-  // (content:// or file://) once so the reader still shows content.
   const [dataOverride, setDataOverride] = useState<string | undefined>(undefined);
 
   const effectiveDoc = useMemo(
@@ -1296,14 +1629,21 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     };
   }, [doc.id, doc.uri, doc.base64Data]);
 
-  // Reader HTML is memoized (expensive: inlines whole base64 payloads) so
-  // unrelated re-renders never re-serialize multi-MB strings.
   const htmlContent = useMemo(() => {
     if (doc.kind === 'image' && Platform.OS !== 'web') return '';
     return buildReaderHtml(effectiveDoc, settings, themeColors);
-  }, [doc.kind, effectiveDoc, settings.theme, settings.fontSize, settings.lineHeight, settings.fontFamily]);
+  }, [
+    doc.kind,
+    effectiveDoc,
+    settings.theme,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.fontFamily,
+    settings.readingMode,
+    settings.nightLight,
+    settings.textAlign,
+  ]);
 
-  // 1. High-Performance Native Image Engine with Touch Gestures on Mobile
   if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {
     const imageUri = doc.base64Data
       ? (doc.base64Data.startsWith('data:') ? doc.base64Data : `data:${doc.mime || 'image/jpeg'};base64,${doc.base64Data}`)
@@ -1312,7 +1652,6 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     return <NativeImageViewer imageUri={imageUri || ''} name={doc.name} themeColors={themeColors} />;
   }
 
-  // Listen for window message on Web
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const handleWindowMessage = (event: MessageEvent) => {
@@ -1328,7 +1667,6 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     }
   }, [onPositionChange]);
 
-  // Send settings update
   useEffect(() => {
     const payload = JSON.stringify({
       action: 'updateSettings',
@@ -1337,6 +1675,9 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
         fontSize: settings.fontSize,
         lineHeight: settings.lineHeight,
         fontFamily: settings.fontFamily,
+        readingMode: settings.readingMode,
+        nightLight: settings.nightLight,
+        textAlign: settings.textAlign,
       },
     });
 
@@ -1399,11 +1740,10 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
               <ActivityIndicator size="large" color={themeColors.accent} />
             </View>
           )}
-          startInLoadingState={true}
         />
       ) : (
         <View style={styles.loading}>
-          <ActivityIndicator size="large" color={themeColors.accent} />
+          <Text style={{ color: themeColors.fg }}>WebView unavailable on this platform</Text>
         </View>
       )}
     </View>
@@ -1413,88 +1753,68 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    width: '100%',
-    height: '100%',
+    overflow: 'hidden',
   },
   webview: {
     flex: 1,
+    backgroundColor: 'transparent',
   },
   loading: {
-    position: 'absolute',
-    inset: 0,
-    alignItems: 'center',
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   imageNativeContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
     position: 'relative',
-    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   imageGestureArea: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageHero: {
     width: '100%',
     height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  nativeImage: {
-    width: '94%',
-    height: '88%',
-  },
-  imageToolbar: {
+  imageControlPill: {
     position: 'absolute',
     bottom: 24,
-    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 7,
     borderRadius: 24,
     borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    gap: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.15,
     shadowRadius: 10,
-    elevation: 8,
+    elevation: 6,
   },
-  toolbarBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    alignItems: 'center',
+  imagePillBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
-  },
-  toolbarBtnText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '600',
-    lineHeight: 20,
-  },
-  scaleBadge: {
-    paddingHorizontal: 10,
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  scaleBadgeText: {
-    color: '#ffffff',
-    fontSize: 13,
+  imagePillBtnWide: {
+    width: 44,
+  },
+  imagePillText: {
+    fontSize: 20,
     fontWeight: '700',
+    lineHeight: 22,
   },
-  toolbarDivider: {
-    width: 1,
-    height: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    marginHorizontal: 8,
+  imagePillBadge: {
+    fontSize: 12,
+    fontWeight: '800',
   },
-  fitBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  fitBtnText: {
-    color: '#60a5fa',
-    fontSize: 13,
-    fontWeight: '600',
+  imagePillLabel: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

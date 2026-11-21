@@ -32,3 +32,5 @@ Thumbs.db
 
 # Artifacts
 *.apk
+*.apkm
+other/

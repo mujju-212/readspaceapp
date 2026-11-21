@@ -13,7 +13,7 @@ export interface AppUpdateInfo {
   error?: string;
 }
 
-export const CURRENT_APP_VERSION = '1.0.0';
+export const CURRENT_APP_VERSION = '1.2.0';
 export const GITHUB_REPO = 'mujju-212/readspaceapp';
 
 export const UpdateService = {

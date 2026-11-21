@@ -1,5 +1,18 @@
-import React, { useRef, useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
+import {
+  View,
+  StyleSheet,
+  ActivityIndicator,
+  Platform,
+  Image,
+  Text,
+  ScrollView,
+  Animated,
+  PanResponder,
+  TouchableOpacity,
+  Dimensions,
+} from 'react-native';
+import * as FileSystem from 'expo-file-system';
 import { MobileDoc, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
 import {
@@ -10,114 +23,601 @@ import {
   OFFLINE_PDFJS_B64,
 } from '../vendor/offlineVendors';
 
+let NativeWebView: any = null;
+if (Platform.OS !== 'web') {
+  try {
+    NativeWebView = require('react-native-webview').WebView;
+  } catch {
+    NativeWebView = null;
+  }
+}
+
 interface HybridReaderProps {
   doc: MobileDoc;
   settings: ReaderSettings;
-  onPositionChange?: (position: { page?: number; scroll?: number; zoom?: number; time?: number }) => void;
+  onPositionChange?: (position: { page?: number; scroll?: number; zoom?: number; time?: number; total?: number; percentage?: number }) => void;
 }
 
-export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPositionChange }) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const themeColors = THEMES[settings.theme];
+const NativeImageViewer: React.FC<{
+  imageUri: string;
+  name: string;
+  themeColors: any;
+}> = ({ imageUri, name, themeColors }) => {
+  const { width: winWidth, height: winHeight } = Dimensions.get('window');
+  const scale = useRef(new Animated.Value(1)).current;
+  const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const [scaleDisplay, setScaleDisplay] = useState(1);
 
-  // Listen for position messages from iframe
-  useEffect(() => {
-    const handleWindowMessage = (event: MessageEvent) => {
-      try {
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-        if (data?.action === 'position' && onPositionChange) {
-          onPositionChange(data.position);
-        }
-      } catch {
-        /* ignore non-json messages */
-      }
-    };
+  const scaleNum = useRef(1);
+  const panOffset = useRef({ x: 0, y: 0 });
+  const touchStartPoint = useRef({ x: 0, y: 0 });
+  const initialPanAtTouch = useRef({ x: 0, y: 0 });
+  const initialDistance = useRef(0);
+  const baseScaleOnPinch = useRef(1);
+  const basePanOnPinch = useRef({ x: 0, y: 0 });
+  const screenFocalOnPinch = useRef({ x: 0, y: 0 });
+  const isPinching = useRef(false);
+  const activeTouchCount = useRef(0);
+  const lastTapTime = useRef(0);
 
-    window.addEventListener('message', handleWindowMessage);
-    return () => window.removeEventListener('message', handleWindowMessage);
-  }, [onPositionChange]);
-
-  // Send settings update to iframe
-  useEffect(() => {
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        JSON.stringify({
-          action: 'updateSettings',
-          settings: {
-            theme: settings.theme,
-            fontSize: settings.fontSize,
-            lineHeight: settings.lineHeight,
-            fontFamily: settings.fontFamily,
-          },
-        }),
-        '*'
-      );
+  const clampBounds = (x: number, y: number, currentScale: number) => {
+    if (currentScale <= 1.05) {
+      return { x: 0, y: 0 };
     }
-  }, [settings]);
+    const maxBoundX = Math.max(0, (winWidth * 0.94 * (currentScale - 1)) / 2 + 30);
+    const maxBoundY = Math.max(0, (winHeight * 0.88 * (currentScale - 1)) / 2 + 50);
+    return {
+      x: Math.min(maxBoundX, Math.max(-maxBoundX, x)),
+      y: Math.min(maxBoundY, Math.max(-maxBoundY, y)),
+    };
+  };
 
-  // Build client-side HTML renderer
-  const htmlContent = `
+  const animateTo = (newScale: number, targetX?: number, targetY?: number) => {
+    const clampedScale = Math.min(6, Math.max(1, newScale));
+    scaleNum.current = clampedScale;
+    setScaleDisplay(clampedScale);
+
+    const bounded = clampBounds(
+      targetX !== undefined ? targetX : panOffset.current.x,
+      targetY !== undefined ? targetY : panOffset.current.y,
+      clampedScale
+    );
+    panOffset.current = bounded;
+
+    Animated.parallel([
+      Animated.spring(scale, {
+        toValue: clampedScale,
+        useNativeDriver: true,
+        friction: 8,
+        tension: 40,
+      }),
+      Animated.spring(pan, {
+        toValue: bounded,
+        useNativeDriver: true,
+        friction: 8,
+        tension: 40,
+      }),
+    ]).start();
+  };
+
+  const startPinch = (touches: any[]) => {
+    const [t0, t1] = touches;
+    initialDistance.current = Math.max(1, Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY));
+    baseScaleOnPinch.current = Math.max(scaleNum.current, 0.001);
+    basePanOnPinch.current = { ...panOffset.current };
+    screenFocalOnPinch.current = {
+      x: (t0.pageX + t1.pageX) / 2 - winWidth / 2,
+      y: (t0.pageY + t1.pageY) / 2 - winHeight / 2,
+    };
+    isPinching.current = true;
+  };
+
+  const applyPinch = (touches: any[]) => {
+    const [t0, t1] = touches;
+    const currentDistance = Math.max(1, Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY));
+    if (initialDistance.current <= 0) return;
+    const ratio = currentDistance / initialDistance.current;
+    const s0 = baseScaleOnPinch.current;
+    const targetScale = Math.min(6, Math.max(1, s0 * ratio));
+
+    const fx = screenFocalOnPinch.current.x;
+    const fy = screenFocalOnPinch.current.y;
+    const bx = basePanOnPinch.current.x;
+    const by = basePanOnPinch.current.y;
+    const factor = (targetScale - s0) / s0;
+    const rawX = bx - factor * (fx - bx);
+    const rawY = by - factor * (fy - by);
+
+    const bounded = clampBounds(rawX, rawY, targetScale);
+    scale.setValue(targetScale);
+    pan.setValue(bounded);
+    panOffset.current = bounded;
+    scaleNum.current = targetScale;
+    setScaleDisplay(targetScale);
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+
+      onPanResponderGrant: (evt) => {
+        const touches = evt.nativeEvent.touches;
+        if (touches.length >= 2) {
+          startPinch(touches);
+          activeTouchCount.current = touches.length;
+        } else if (touches.length === 1) {
+          isPinching.current = false;
+          activeTouchCount.current = 1;
+          touchStartPoint.current = { x: touches[0].pageX, y: touches[0].pageY };
+          initialPanAtTouch.current = { ...panOffset.current };
+
+          const now = Date.now();
+          if (now - lastTapTime.current < 320) {
+            lastTapTime.current = 0;
+            activeTouchCount.current = 0;
+            touchStartPoint.current = { x: touches[0].pageX, y: touches[0].pageY };
+            initialPanAtTouch.current = { ...panOffset.current };
+            if (scaleNum.current > 1.3) {
+              animateTo(1, 0, 0);
+            } else {
+              const s0 = Math.max(scaleNum.current, 0.001);
+              const target = 2.6;
+              const fx = touches[0].pageX - winWidth / 2;
+              const fy = touches[0].pageY - winHeight / 2;
+              const factor = (target - s0) / s0;
+              animateTo(target, panOffset.current.x - factor * (fx - panOffset.current.x), panOffset.current.y - factor * (fy - panOffset.current.y));
+            }
+            return;
+          }
+          lastTapTime.current = now;
+        }
+      },
+
+      onPanResponderMove: (evt) => {
+        const touches = evt.nativeEvent.touches;
+        const count = touches.length;
+        const prevCount = activeTouchCount.current;
+
+        if (count !== prevCount) {
+          if (prevCount <= 1 && count >= 2) {
+            startPinch(touches);
+          } else if (prevCount >= 2 && count === 1) {
+            isPinching.current = false;
+            const remaining = touches[0];
+            touchStartPoint.current = { x: remaining.pageX, y: remaining.pageY };
+            initialPanAtTouch.current = { ...panOffset.current };
+          }
+          activeTouchCount.current = count;
+        }
+
+        if (isPinching.current && count >= 2) {
+          applyPinch(touches);
+        } else if (count === 1 && !isPinching.current) {
+          const dx = touches[0].pageX - touchStartPoint.current.x;
+          const dy = touches[0].pageY - touchStartPoint.current.y;
+
+          if (scaleNum.current > 1.05) {
+            const rawX = initialPanAtTouch.current.x + dx;
+            const rawY = initialPanAtTouch.current.y + dy;
+            const bounded = clampBounds(rawX, rawY, scaleNum.current);
+            pan.setValue(bounded);
+            panOffset.current = bounded;
+          }
+        }
+      },
+
+      onPanResponderRelease: () => {
+        isPinching.current = false;
+        activeTouchCount.current = 0;
+        if (scaleNum.current <= 1.05) {
+          animateTo(1, 0, 0);
+        } else {
+          const bounded = clampBounds(panOffset.current.x, panOffset.current.y, scaleNum.current);
+          animateTo(scaleNum.current, bounded.x, bounded.y);
+        }
+      },
+      onPanResponderTerminate: () => {
+        isPinching.current = false;
+        activeTouchCount.current = 0;
+        animateTo(scaleNum.current <= 1.05 ? 1 : scaleNum.current);
+      },
+    })
+  ).current;
+
+  const zoomIn = () => animateTo(scaleNum.current * 1.35);
+  const zoomOut = () => animateTo(scaleNum.current * 0.74);
+  const resetZoom = () => animateTo(1, 0, 0);
+  const fitWidth = () => animateTo(2.4, 0, 0);
+
+  return (
+    <View style={[styles.container, styles.imageNativeContainer, { backgroundColor: themeColors.bg }]}>
+      <View style={styles.imageGestureArea} {...panResponder.panHandlers}>
+        <Animated.Image
+          source={{ uri: imageUri }}
+          style={[
+            styles.imageHero,
+            {
+              transform: [{ scale }, { translateX: pan.x }, { translateY: pan.y }],
+            },
+          ]}
+          resizeMode="contain"
+        />
+      </View>
+
+      <View style={[styles.imageControlPill, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
+        <TouchableOpacity style={styles.imagePillBtn} onPress={zoomOut} accessibilityLabel="Zoom out">
+          <Text style={[styles.imagePillText, { color: themeColors.fg }]}>−</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.imagePillBtn} onPress={resetZoom} accessibilityLabel="Reset zoom">
+          <Text style={[styles.imagePillBadge, { color: themeColors.accent }]}>{Math.round(scaleDisplay * 100)}%</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.imagePillBtn} onPress={zoomIn} accessibilityLabel="Zoom in">
+          <Text style={[styles.imagePillText, { color: themeColors.fg }]}>+</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.imagePillBtn, styles.imagePillBtnWide]} onPress={fitWidth} accessibilityLabel="Fit width">
+          <Text style={[styles.imagePillLabel, { color: themeColors.fg }]}>Fit</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
+function getRequiredVendorBundles(kind?: string): string[] {
+  switch (kind) {
+    case 'pdf':
+      return [OFFLINE_PDFJS_B64];
+    case 'markdown':
+      return [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64];
+    case 'docx':
+      return [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64];
+    case 'pptx':
+      return [OFFLINE_JSZIP_B64];
+    case 'html':
+      return [OFFLINE_DOMPURIFY_B64];
+    default:
+      return [];
+  }
+}
+
+function getFallbackCdns(kind?: string) {
+  switch (kind) {
+    case 'pdf':
+      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>'];
+    case 'markdown':
+      return [
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>',
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
+      ];
+    case 'docx':
+      return [
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>',
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>',
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
+      ];
+    case 'pptx':
+      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>'];
+    case 'html':
+      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>'];
+    default:
+      return [];
+  }
+}
+
+function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: any): string {
+  const bundlesToRun = getRequiredVendorBundles(doc.kind);
+  const bundleScript = bundlesToRun.length > 0
+    ? `
+  <script>
+  (function() {
+    function runBundle(b64) {
+      if (!b64) return;
+      try {
+        var code = atob(b64);
+        (0, eval)(code);
+      } catch(e) {
+        try {
+          var code2 = decodeURIComponent(escape(atob(b64)));
+          (0, eval)(code2);
+        } catch(e2) {
+          try {
+            var s = document.createElement('script');
+            s.textContent = atob(b64);
+            document.head.appendChild(s);
+          } catch(e3) {
+            console.warn('Bundle load error:', e3);
+          }
+        }
+      }
+    }
+    ${bundlesToRun.map((b) => `runBundle(${JSON.stringify(b)});`).join('\n    ')}
+  })();
+  </script>`
+    : '';
+
+  const fallbackCdns = getFallbackCdns(doc.kind).join('\n  ');
+  const nightLightOpacity = ((settings.nightLight || 0) / 100) * 0.42;
+
+  return `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>${doc.name}</title>
-  <!-- Offline-bundled document engines (Guaranteed zero-network execution) -->
-  <script>
-  (function() {
-    function loadBundle(b64) {
-      if (!b64) return;
-      try {
-        var code = decodeURIComponent(escape(atob(b64)));
-        var s = document.createElement('script');
-        s.textContent = code;
-        document.head.appendChild(s);
-      } catch(e) {
-        try {
-          var s2 = document.createElement('script');
-          s2.textContent = atob(b64);
-          document.head.appendChild(s2);
-        } catch(e2) {}
-      }
-    }
-    loadBundle(${JSON.stringify(OFFLINE_MARKED_B64)});
-    loadBundle(${JSON.stringify(OFFLINE_DOMPURIFY_B64)});
-    loadBundle(${JSON.stringify(OFFLINE_JSZIP_B64)});
-    loadBundle(${JSON.stringify(OFFLINE_MAMMOTH_B64)});
-    loadBundle(${JSON.stringify(OFFLINE_PDFJS_B64)});
-  })();
-  </script>
-  <!-- CDNs for fallback when online -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+  ${bundleScript}
+  ${fallbackCdns}
   <style>
     :root {
       --bg: ${themeColors.bg};
       --panel: ${themeColors.panel};
+      --card: ${themeColors.card};
       --border: ${themeColors.border};
       --fg: ${themeColors.fg};
       --muted: ${themeColors.muted};
       --accent: ${themeColors.accent};
       --accent-fg: ${themeColors.accentFg};
       --pdf-bg: ${themeColors.pdfBg};
+      --sel: ${themeColors.sel};
+      --nightlight-alpha: ${nightLightOpacity};
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    body {
+    html, body {
       margin: 0;
       padding: 0;
+      width: 100%;
+      height: 100%;
       background: var(--bg);
       color: var(--fg);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: ${settings.fontSize}px;
       line-height: ${settings.lineHeight};
       overflow-x: hidden;
     }
-    
-    /* PDF Viewer */
+    body[data-font="system"] { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body[data-font="serif"] { font-family: "Merriweather", Georgia, Cambria, "Times New Roman", serif; }
+    body[data-font="mono"] { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    body[data-font="dyslexic"] { font-family: "OpenDyslexic", "Comic Sans MS", cursive, sans-serif; }
+    body[data-align="justify"] .reader-body p, body[data-align="justify"] .rs-paged-body p { text-align: justify; text-justify: inter-word; }
+    body[data-align="left"] .reader-body p, body[data-align="left"] .rs-paged-body p { text-align: left; }
+
+    /* Amber Night Light Filter (Play Books style blue-light reduction) */
+    .rs-nightlight-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-color: rgba(255, 150, 10, var(--nightlight-alpha, 0));
+      mix-blend-mode: multiply;
+      z-index: 99999;
+      transition: background-color 0.3s ease;
+    }
+
+    /* 3D Book Stage (Play Books inspired page-curl cylinder) */
+    .rs-book-stage {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      perspective: 2000px;
+      perspective-origin: 50% 50%;
+      overflow: hidden;
+      background: var(--pdf-bg);
+      user-select: none;
+      -webkit-user-select: none;
+      padding: 10px 10px 65px;
+      box-sizing: border-box;
+    }
+    .rs-book-container {
+      position: relative;
+      width: 100%;
+      max-width: 820px;
+      height: 100%;
+      background: var(--panel);
+      border-radius: 8px;
+      box-shadow: 0 16px 50px rgba(0, 0, 0, 0.28), 0 2px 10px rgba(0, 0, 0, 0.12);
+      transform-style: preserve-3d;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .rs-page-leaf {
+      position: absolute;
+      inset: 0;
+      background: #ffffff;
+      transform-origin: left center;
+      transform-style: preserve-3d;
+      transition: transform 0.48s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.4s ease;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+      border-radius: 0 6px 6px 0;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+    body[data-theme="dark"] .rs-page-leaf {
+      background: #141b2d;
+      color: #e2e8f0;
+      box-shadow: 0 0 25px rgba(255, 175, 40, 0.08), 0 8px 30px rgba(0, 0, 0, 0.6);
+    }
+    body[data-theme="sepia"] .rs-page-leaf {
+      background: #fbf0d9;
+      color: #43382a;
+    }
+    .rs-page-leaf.turned {
+      transform: rotateY(-180deg) !important;
+      pointer-events: none;
+      visibility: hidden;
+    }
+    .rs-page-leaf.active-leaf {
+      z-index: 10;
+    }
+    .rs-page-crease {
+      position: absolute;
+      top: 0; bottom: 0; left: 0;
+      width: 36px;
+      pointer-events: none;
+      background: linear-gradient(to right, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.06) 40%, rgba(255,255,255,0.08) 75%, transparent 100%);
+      z-index: 25;
+    }
+    body[data-theme="dark"] .rs-page-crease {
+      background: linear-gradient(to right, rgba(0,0,0,0.5) 0%, rgba(255,180,50,0.1) 50%, transparent 100%);
+    }
+    .rs-page-content {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      padding: 6px;
+      box-sizing: border-box;
+    }
+    .rs-page-content canvas {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .rs-page-header, .rs-page-footer {
+      padding: 8px 18px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      user-select: none;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,0.02);
+      flex-shrink: 0;
+    }
+    .rs-page-footer {
+      border-bottom: none;
+      border-top: 1px solid var(--border);
+    }
+
+    /* Tap zones for 3D page turning */
+    .rs-tap-left {
+      position: absolute;
+      top: 0; bottom: 0; left: 0;
+      width: 25%;
+      z-index: 35;
+      cursor: pointer;
+    }
+    .rs-tap-right {
+      position: absolute;
+      top: 0; bottom: 0; right: 0;
+      width: 25%;
+      z-index: 35;
+      cursor: pointer;
+    }
+    .rs-tap-center {
+      position: absolute;
+      top: 0; bottom: 0; left: 25%; right: 25%;
+      z-index: 30;
+      cursor: default;
+    }
+
+    /* Paginated markdown / text in 3D book mode */
+    .rs-paged-body {
+      height: 100%;
+      width: 100%;
+      padding: 24px 28px;
+      overflow-y: auto;
+      box-sizing: border-box;
+      font-size: inherit;
+      line-height: inherit;
+      color: inherit;
+      word-break: break-word;
+    }
+
+    /* Floating Scrubber Bar (Google Play Books SearchScrubBar style) */
+    .rs-scrub-bar {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.22);
+      z-index: 9000;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      opacity: 1;
+      max-width: 94vw;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .rs-scrub-bar.hidden-bar {
+      opacity: 0;
+      transform: translateX(-50%) translateY(28px);
+      pointer-events: none;
+    }
+    .rs-scrub-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--fg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .rs-scrub-btn:active {
+      transform: scale(0.92);
+      background: var(--accent);
+      color: var(--accent-fg);
+    }
+    .rs-scrub-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 110px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      outline: none;
+      cursor: pointer;
+    }
+    .rs-scrub-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .rs-page-pill {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      white-space: nowrap;
+      padding: 0 4px;
+      min-width: 80px;
+      text-align: center;
+    }
+    .rs-mode-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 10px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--accent-fg);
+      border: none;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    /* Standard Vertical PDF Viewer */
     .pdf-container {
       display: flex;
       flex-direction: column;
@@ -136,8 +636,36 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     .pdf-page canvas {
       display: block;
       width: 100%;
-      height: auto;
+      height: 100%;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: high-quality;
     }
+    img {
+      max-width: 100%;
+      height: auto;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: high-quality;
+    }
+    .pdf-page-inner { position: relative; overflow: hidden; margin: 0 auto; background: #fff; }
+    .textLayer { position: absolute; inset: 0; overflow: hidden; line-height: 1; text-size-adjust: none; }
+    .textLayer span { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; }
+    .textLayer ::selection { background: rgba(59, 130, 246, 0.35); }
+    .rs-toast {
+      position: fixed;
+      bottom: 64px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.95);
+      color: #ffffff;
+      padding: 9px 15px;
+      border-radius: 10px;
+      font-size: 12.5px;
+      z-index: 60;
+      opacity: 0;
+      transition: opacity 0.25s;
+      pointer-events: none;
+    }
+    .rs-toast.show { opacity: 1; }
 
     /* Presentation (PPTX) Viewer */
     .pptx-container {
@@ -263,24 +791,82 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
       max-height: 100%;
     }
 
-    /* Document Reader (Markdown / Text / DOCX / HTML) */
+    /* Image Viewer */
+    .image-viewer-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 85vh;
+      padding: 20px 14px 80px;
+      background: var(--bg);
+    }
+    .responsive-image {
+      max-width: 100%;
+      max-height: 75vh;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+    }
+    .image-info-bar {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+      text-align: center;
+      max-width: 90%;
+      word-break: break-all;
+    }
+
+    /* Standard Vertical Document Reader */
     .reader-body {
       padding: 20px 18px 80px;
+      user-select: text;
+      -webkit-user-select: text;
       max-width: 760px;
       margin: 0 auto;
+      word-break: break-word;
+      overflow-wrap: break-word;
     }
-    .reader-body h1 { font-size: 1.6em; margin: 1em 0 0.5em; }
-    .reader-body h2 { font-size: 1.35em; margin: 1em 0 0.4em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-    .reader-body p { margin: 0.8em 0; }
+    .reader-body h1 { font-size: 1.7em; margin: 1.2em 0 0.5em; font-weight: 700; line-height: 1.25; }
+    .reader-body h2 { font-size: 1.4em; margin: 1.1em 0 0.4em; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    .reader-body h3 { font-size: 1.2em; margin: 1em 0 0.3em; font-weight: 600; }
+    .reader-body h4 { font-size: 1.05em; margin: 0.9em 0 0.25em; font-weight: 600; }
+    .reader-body p { margin: 0.8em 0; line-height: inherit; }
+    .reader-body ul, .reader-body ol { padding-left: 24px; margin: 0.8em 0; }
+    .reader-body li { margin: 0.35em 0; }
+    .reader-body blockquote {
+      margin: 1em 0;
+      padding: 8px 16px;
+      border-left: 4px solid var(--accent);
+      background: var(--panel);
+      color: var(--muted);
+      border-radius: 0 8px 8px 0;
+    }
+    .reader-body code {
+      background: rgba(150, 150, 150, 0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9em;
+    }
     .reader-body pre {
-      background: rgba(150, 150, 150, 0.1);
-      padding: 12px;
+      background: rgba(150, 150, 150, 0.12);
+      padding: 14px 16px;
       border-radius: 8px;
       overflow-x: auto;
       font-size: 0.9em;
+      border: 1px solid var(--border);
     }
-    .reader-body table { width: 100%; border-collapse: collapse; margin: 1em 0; }
-    .reader-body th, .reader-body td { border: 1px solid var(--border); padding: 6px 10px; }
+    .reader-body pre code {
+      background: transparent;
+      padding: 0;
+      border-radius: 0;
+    }
+    .reader-body table { width: 100%; border-collapse: collapse; margin: 1em 0; overflow-x: auto; display: block; }
+    .reader-body th, .reader-body td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+    .reader-body th { background: var(--panel); font-weight: 600; }
+    .reader-body hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+    .reader-body a { color: var(--accent); text-decoration: underline; }
     .reader-body img { max-width: 100%; height: auto; border-radius: 6px; }
     .reader-body svg { max-width: 100%; height: auto; }
     .html-toolbar {
@@ -335,12 +921,25 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     }
   </style>
 </head>
-<body>
+<body data-font="${settings.fontFamily || 'system'}" data-align="${settings.textAlign || 'left'}" data-theme="${settings.theme}">
+  <div id="rsNightLightOverlay" class="rs-nightlight-overlay"></div>
+
   <div id="root">
     <div class="loading-spinner">
       <div style="font-size: 32px;">📖</div>
       <div>Loading ${doc.name}…</div>
     </div>
+  </div>
+
+  <!-- Interactive Floating Bottom Scrubber -->
+  <div class="rs-scrub-bar hidden-bar" id="rsScrubBar">
+    <button type="button" class="rs-scrub-btn" id="rsBtnPrev" title="Previous Page">‹</button>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+      <span class="rs-page-pill" id="rsPagePill">Page 1 of 1</span>
+      <input type="range" class="rs-scrub-slider" id="rsScrubSlider" min="1" max="1" value="1">
+    </div>
+    <button type="button" class="rs-scrub-btn" id="rsBtnNext" title="Next Page">›</button>
+    <button type="button" class="rs-mode-badge" id="rsBtnMode">${(settings.readingMode || 'curl') === 'curl' ? '📖 3D' : '📜 Scroll'}</button>
   </div>
 
   <script>
@@ -349,6 +948,17 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     const docBase64 = ${JSON.stringify(doc.base64Data || '')};
     const docUri = ${JSON.stringify(doc.uri || '')};
     const docStreamUrl = ${JSON.stringify((doc as any).streamUrl || '')};
+
+    window.__readerState = {
+      mode: ${JSON.stringify(settings.readingMode || 'curl')},
+      page: 1,
+      total: 1,
+      nightLight: ${Number(settings.nightLight || 0)},
+      fontFamily: ${JSON.stringify(settings.fontFamily || 'system')},
+      textAlign: ${JSON.stringify(settings.textAlign || 'left')},
+      fontSize: ${Number(settings.fontSize || 16)},
+      lineHeight: ${Number(settings.lineHeight || 1.6)},
+    };
 
     function sendPosition(pos) {
       if (window.ReactNativeWebView) {
@@ -374,75 +984,292 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
       return bytes;
     }
 
+    function decodeUtf8Base64(base64) {
+      if (!base64) return '';
+      try {
+        const binString = atob(base64);
+        const bytes = Uint8Array.from(binString, (m) => m.charCodeAt(0));
+        return new TextDecoder('utf-8').decode(bytes);
+      } catch (e) {
+        try {
+          return decodeURIComponent(escape(atob(base64)));
+        } catch {
+          return atob(base64);
+        }
+      }
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    let hideScrubberTimer = null;
+    function showScrubberBriefly() {
+      const bar = document.getElementById('rsScrubBar');
+      if (!bar) return;
+      bar.classList.remove('hidden-bar');
+      clearTimeout(hideScrubberTimer);
+      hideScrubberTimer = setTimeout(() => {
+        bar.classList.add('hidden-bar');
+      }, 3500);
+    }
+
+    function updateScrubber(current, total) {
+      window.__readerState.page = current;
+      window.__readerState.total = total;
+      const pill = document.getElementById('rsPagePill');
+      const slider = document.getElementById('rsScrubSlider');
+      const btnMode = document.getElementById('rsBtnMode');
+      const pct = Math.max(1, Math.min(100, Math.round((current / (total || 1)) * 100)));
+
+      if (pill) pill.textContent = 'Page ' + current + ' of ' + total + ' (' + pct + '%)';
+      if (slider) {
+        slider.min = 1;
+        slider.max = total;
+        slider.value = current;
+      }
+      if (btnMode) {
+        btnMode.textContent = window.__readerState.mode === 'curl' ? '📖 3D' : '📜 Scroll';
+      }
+      sendPosition({ page: current, total: total, percentage: pct });
+    }
+
     async function renderDoc() {
       const root = document.getElementById('root');
+      const mode = window.__readerState.mode;
 
       try {
         if (docKind === 'pdf') {
-          root.innerHTML = '<div class="pdf-container" id="pdfRoot"></div>';
-          const container = document.getElementById('pdfRoot');
-          
-          if (!docBase64 && !docUri) {
-            container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">⚠️ PDF loading requires file data. Please re-open the document.</div>';
+          if (!docBase64) {
+            root.innerHTML = '<div style="padding:20px;">PDF loading requires file data. Please re-open.</div>';
+            return;
+          }
+          if (typeof pdfjsLib === 'undefined') {
+            root.innerHTML = '<div style="padding:20px;">PDF engine could not load. Re-open once online to cache it.</div>';
             return;
           }
 
-          if (typeof pdfjsLib !== 'undefined') {
-            try {
-              if (navigator.onLine) {
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-              } else {
-                pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-              }
-            } catch {
+          try {
+            if (navigator.onLine) {
+              pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            } else {
               pdfjsLib.GlobalWorkerOptions.workerSrc = '';
             }
-            let pdf;
-            if (docBase64) {
-              const pdfData = base64ToUint8Array(docBase64);
-              pdf = await pdfjsLib.getDocument({ data: pdfData, disableWorker: !navigator.onLine }).promise;
-            } else {
-              pdf = await pdfjsLib.getDocument({ url: docUri }).promise;
+          } catch {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+          }
+
+          const pdf = await pdfjsLib.getDocument({ data: base64ToUint8Array(docBase64), disableWorker: !navigator.onLine }).promise;
+          window.__rsPdf = pdf;
+          const totalPages = pdf.numPages;
+
+          if (mode === 'curl') {
+            // 3D Realistic Page-Turn Mode
+            root.innerHTML = 
+              '<div class="rs-book-stage">' +
+                '<div class="rs-book-container" id="rsBookContainer">' +
+                  '<div class="rs-tap-left" id="rsTapLeft" title="Previous Page"></div>' +
+                  '<div class="rs-tap-center" id="rsTapCenter"></div>' +
+                  '<div class="rs-tap-right" id="rsTapRight" title="Next Page"></div>' +
+                '</div>' +
+              '</div>';
+            const container = document.getElementById('rsBookContainer');
+            const leaves = [];
+
+            for (let i = 1; i <= totalPages; i++) {
+              const leaf = document.createElement('div');
+              leaf.className = 'rs-page-leaf' + (i === 1 ? ' active-leaf' : '');
+              leaf.dataset.page = String(i);
+              leaf.style.zIndex = String(totalPages - i + 1);
+
+              leaf.innerHTML = 
+                '<div class="rs-page-header">' +
+                  '<span>' + escapeHtml(docName) + '</span>' +
+                  '<span>Page ' + i + ' of ' + totalPages + '</span>' +
+                '</div>' +
+                '<div class="rs-page-crease"></div>' +
+                '<div class="rs-page-content" id="rsPdfContent_' + i + '">' +
+                  '<div style="color:var(--muted); font-size:12px;">Rendering page ' + i + '…</div>' +
+                '</div>' +
+                '<div class="rs-page-footer">' +
+                  '<span>ReadSpace 3D</span>' +
+                  '<span>' + Math.round((i / totalPages) * 100) + '%</span>' +
+                '</div>';
+              container.appendChild(leaf);
+              leaves.push(leaf);
             }
 
-            for (let i = 1; i <= pdf.numPages; i++) {
-              const page = await pdf.getPage(i);
-              const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
-              const crispScale = Math.max(dpr * 1.5, 2.8);
-              const viewport = page.getViewport({ scale: crispScale });
+            const renderedCanvases = new Set();
+            const renderPdfPage = async (pageIndex) => {
+              if (pageIndex < 1 || pageIndex > totalPages || renderedCanvases.has(pageIndex)) return;
+              renderedCanvases.add(pageIndex);
+              try {
+                const page = await pdf.getPage(pageIndex);
+                const contentDiv = document.getElementById('rsPdfContent_' + pageIndex);
+                if (!contentDiv) return;
 
+                const vp1 = page.getViewport({ scale: 1 });
+                const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+                const containerWidth = Math.max(300, container.clientWidth - 20);
+                const scale = (containerWidth / vp1.width) * dpr;
+                const viewport = page.getViewport({ scale: scale });
+
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(viewport.width);
+                canvas.height = Math.round(viewport.height);
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                contentDiv.replaceChildren(canvas);
+
+                const ctx = canvas.getContext('2d', { alpha: false });
+                if (ctx) {
+                  ctx.imageSmoothingEnabled = true;
+                  ctx.imageSmoothingQuality = 'high';
+                }
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+              } catch (e) {
+                console.warn('3d page render err', e);
+              }
+            };
+
+            let curPage = 1;
+            const updateLeaves = (targetPage) => {
+              targetPage = Math.max(1, Math.min(totalPages, targetPage));
+              curPage = targetPage;
+              leaves.forEach((l, idx) => {
+                const pNum = idx + 1;
+                if (pNum < curPage) {
+                  l.classList.add('turned');
+                  l.classList.remove('active-leaf');
+                } else if (pNum === curPage) {
+                  l.classList.remove('turned');
+                  l.classList.add('active-leaf');
+                } else {
+                  l.classList.remove('turned');
+                  l.classList.remove('active-leaf');
+                }
+              });
+              renderPdfPage(curPage);
+              renderPdfPage(curPage + 1);
+              renderPdfPage(curPage - 1);
+              updateScrubber(curPage, totalPages);
+            };
+
+            window.rsNextPage = () => {
+              if (curPage < totalPages) updateLeaves(curPage + 1);
+            };
+            window.rsPrevPage = () => {
+              if (curPage > 1) updateLeaves(curPage - 1);
+            };
+            window.rsGoToPage = (p) => updateLeaves(p);
+
+            // Tap & Touch Bindings
+            document.getElementById('rsTapLeft').onclick = () => { window.rsPrevPage(); showScrubberBriefly(); };
+            document.getElementById('rsTapRight').onclick = () => { window.rsNextPage(); showScrubberBriefly(); };
+            document.getElementById('rsTapCenter').onclick = () => showScrubberBriefly();
+
+            let touchStartX = 0;
+            let touchStartY = 0;
+            container.addEventListener('touchstart', (e) => {
+              if (e.touches.length === 1) {
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+              }
+            }, { passive: true });
+
+            container.addEventListener('touchend', (e) => {
+              if (e.changedTouches.length === 1) {
+                const dx = e.changedTouches[0].clientX - touchStartX;
+                const dy = e.changedTouches[0].clientY - touchStartY;
+                if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy)) {
+                  if (dx < 0) window.rsNextPage();
+                  else window.rsPrevPage();
+                  showScrubberBriefly();
+                }
+              }
+            }, { passive: true });
+
+            updateLeaves(1);
+          } else {
+            // Continuous Vertical Scroll Mode
+            root.innerHTML = '<div class="pdf-container" id="pdfRoot"></div>';
+            const pdfRoot = document.getElementById('pdfRoot');
+            const placeholders = [];
+
+            for (let i = 1; i <= totalPages; i++) {
               const pageDiv = document.createElement('div');
               pageDiv.className = 'pdf-page';
-              const canvas = document.createElement('canvas');
-              const context = canvas.getContext('2d', { alpha: false });
-              if (context) {
-                context.imageSmoothingEnabled = true;
-                context.imageSmoothingQuality = 'high';
-              }
-              canvas.height = viewport.height;
-              canvas.width = viewport.width;
-              canvas.style.width = '100%';
-              canvas.style.height = 'auto';
-
-              await page.render({ canvasContext: context, viewport: viewport }).promise;
-              pageDiv.appendChild(canvas);
-              container.appendChild(pageDiv);
+              pageDiv.dataset.pageNumber = String(i);
+              pdfRoot.appendChild(pageDiv);
+              placeholders.push(pageDiv);
             }
+
+            const renderOne = async (pageDiv) => {
+              const num = Number(pageDiv.dataset.pageNumber);
+              try {
+                const page = await pdf.getPage(num);
+                const vp1 = page.getViewport({ scale: 1 });
+                const cssWidth = Math.round(pageDiv.clientWidth || document.documentElement.clientWidth - 20);
+                const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+                const renderScale = (cssWidth / vp1.width) * dpr;
+                const viewport = page.getViewport({ scale: renderScale });
+
+                const wrap = document.createElement('div');
+                wrap.className = 'pdf-page-inner';
+                wrap.style.width = cssWidth + 'px';
+                wrap.style.height = Math.round(cssWidth * (vp1.height / vp1.width)) + 'px';
+                pageDiv.style.width = cssWidth + 'px';
+
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(viewport.width);
+                canvas.height = Math.round(viewport.height);
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                wrap.appendChild(canvas);
+                pageDiv.replaceChildren(wrap);
+
+                const ctx = canvas.getContext('2d', { alpha: false });
+                if (ctx) {
+                  ctx.imageSmoothingEnabled = true;
+                  ctx.imageSmoothingQuality = 'high';
+                }
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+              } catch (e) {
+                console.warn('pdf render err', e);
+              }
+            };
+
+            const io = new IntersectionObserver((entries) => {
+              for (const en of entries) {
+                if (en.isIntersecting) {
+                  renderOne(en.target);
+                  const pNum = Number(en.target.dataset.pageNumber);
+                  updateScrubber(pNum, totalPages);
+                }
+              }
+            }, { rootMargin: '400px' });
+            placeholders.forEach((el) => io.observe(el));
+
+            window.rsGoToPage = (p) => {
+              const el = placeholders[p - 1];
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            };
+            window.rsNextPage = () => {
+              const nextP = Math.min(totalPages, window.__readerState.page + 1);
+              window.rsGoToPage(nextP);
+            };
+            window.rsPrevPage = () => {
+              const prevP = Math.max(1, window.__readerState.page - 1);
+              window.rsGoToPage(prevP);
+            };
+            updateScrubber(1, totalPages);
           }
         } else if (docKind === 'pptx') {
-          let zipData;
-          if (docBase64) {
-            zipData = base64ToUint8Array(docBase64);
-          } else if (docUri) {
-            const res = await fetch(docUri);
-            zipData = await res.arrayBuffer();
-          } else {
-            throw new Error('No PPTX data');
-          }
-          const zip = await JSZip.loadAsync(zipData);
+          if (!docBase64) throw new Error('No PPTX data');
+          const zip = await JSZip.loadAsync(base64ToUint8Array(docBase64));
           const slideFiles = [];
           zip.forEach((path) => {
-            const m = path.match(/^ppt\\/slides\\/slide(\\d+)\\.xml$/i);
+            const m = path.match(/^ppt\/slides\/slide(\d+)\.xml$/i);
             if (m) slideFiles.push({ path, num: parseInt(m[1], 10) });
           });
           slideFiles.sort((a, b) => a.num - b.num);
@@ -452,35 +1279,38 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 
           for (let i = 0; i < slideFiles.length; i++) {
             const xml = await zip.file(slideFiles[i].path).async('string');
-            const parsedDoc = parser.parseFromString(xml, 'application/xml');
+            const sDoc = parser.parseFromString(xml, 'application/xml');
             let title = 'Slide ' + (i + 1);
-            const titleEl = parsedDoc.querySelector('p\\\\:sp p\\\\:ph[type="title"], p\\\\:sp p\\\\:ph[type="ctrTitle"]');
+            const titleEl = sDoc.querySelector('p\\:sp p\\:ph[type="title"], p\\:sp p\\:ph[type="ctrTitle"]');
             if (titleEl) {
-              const textEl = titleEl.closest('p\\\\:sp')?.querySelector('a\\\\:t');
+              const textEl = titleEl.closest('p\\:sp')?.querySelector('a\\:t');
               if (textEl && textEl.textContent) title = textEl.textContent.trim();
             }
 
             const bullets = [];
-            const textNodes = parsedDoc.querySelectorAll('a\\\\:p');
+            const textNodes = sDoc.querySelectorAll('a\\:p');
             textNodes.forEach(p => {
               const t = p.textContent?.trim();
               if (t && t !== title) bullets.push(t);
             });
 
-            slidesHtml += '<div class="pptx-card">' +
-              '<h3 class="pptx-slide-title">Slide ' + (i + 1) + ': ' + title + '</h3>' +
-              '<div class="pptx-bullets">' +
-              bullets.map(b => '<div class="pptx-bullet">• ' + b + '</div>').join('') +
-              '</div></div>';
+            slidesHtml += 
+              '<div class="pptx-card">' +
+                '<h3 class="pptx-slide-title">Slide ' + (i + 1) + ': ' + escapeHtml(title) + '</h3>' +
+                '<div class="pptx-bullets">' +
+                  bullets.map(b => '<div class="pptx-bullet">• ' + escapeHtml(b) + '</div>').join('') +
+                '</div>' +
+              '</div>';
           }
 
           root.innerHTML = '<div class="pptx-container">' + slidesHtml + '</div>';
+          updateScrubber(1, Math.max(1, slideFiles.length));
         } else if (docKind === 'audio') {
           const audioUrl = docStreamUrl || docUri || (docBase64 ? 'data:audio/mpeg;base64,' + docBase64 : '');
           root.innerHTML = '<div class="audio-wrap">' +
             '<div class="audio-card">' +
               '<div class="audio-disc">🎵</div>' +
-              '<h2 class="audio-title">' + docName + '</h2>' +
+              '<h2 class="audio-title">' + escapeHtml(docName) + '</h2>' +
               '<div class="audio-progress">' +
                 '<div class="audio-progress-fill" id="audioFill"></div>' +
               '</div>' +
@@ -490,7 +1320,8 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
                 '<button class="btn" onclick="skipAudio(10)">10s ↻</button>' +
               '</div>' +
               '<audio id="audioEl" src="' + audioUrl + '"></audio>' +
-            '</div></div>';
+            '</div>' +
+          '</div>';
 
           const audio = document.getElementById('audioEl');
           const playBtn = document.getElementById('playBtn');
@@ -519,214 +1350,170 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           const videoUrl = docStreamUrl || docUri || (docBase64 ? 'data:video/mp4;base64,' + docBase64 : '');
           root.innerHTML = '<div class="video-wrap">' +
             '<video src="' + videoUrl + '" controls playsinline autoplay style="max-width:100%; max-height:88vh; outline:none; border-radius:10px;"></video>' +
-            '</div>';
-        } else if (docKind === 'image') {
-          let imgSrc = '';
-          if (docBase64) {
-            if (docBase64.startsWith('data:image/')) {
-              imgSrc = docBase64;
-            } else {
-              let mimeType = 'image/jpeg';
-              if (docBase64.indexOf('iVBORw0KGgo') === 0 || docName.match(/\.png$/i)) mimeType = 'image/png';
-              else if (docBase64.indexOf('R0lGOD') === 0 || docName.match(/\.gif$/i)) mimeType = 'image/gif';
-              else if (docBase64.indexOf('UklGR') === 0 || docName.match(/\.webp$/i)) mimeType = 'image/webp';
-              else if (docName.match(/\.svg$/i)) mimeType = 'image/svg+xml';
-              else if (docName.match(/\.bmp$/i)) mimeType = 'image/bmp';
-              else if (docName.match(/\.ico$/i)) mimeType = 'image/x-icon';
-              imgSrc = 'data:' + mimeType + ';base64,' + docBase64;
-            }
-          } else if (docUri) {
-            imgSrc = docUri;
-          }
-
-          if (!imgSrc) {
-            root.innerHTML = '<div class="loading-spinner"><p>⚠️ No image data found</p></div>';
-            return;
-          }
-
-          root.innerHTML = '<div class="image-viewer-container" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:85vh;padding:20px;">' +
-            '<img src="' + imgSrc + '" alt="' + escapeHtml(docName) + '" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.15);" />' +
-            '<div style="margin-top:14px;font-size:12px;color:var(--muted);">' + escapeHtml(docName) + '</div>' +
-          '</div>';
-        } else if (docKind === 'docx') {
-          let buffer;
-          if (docBase64) {
-            buffer = base64ToUint8Array(docBase64).buffer;
-          } else if (docUri) {
-            const res = await fetch(docUri);
-            buffer = await res.arrayBuffer();
-          } else {
-            throw new Error('No DOCX data available');
-          }
-          const res = await mammoth.convertToHtml({ arrayBuffer: buffer });
-          root.innerHTML = '<div class="reader-body">' + DOMPurify.sanitize(res.value) + '</div>';
-        } else if (docKind === 'markdown') {
-          let rawText = '';
-          if (docBase64) {
-            rawText = new TextDecoder().decode(base64ToUint8Array(docBase64));
-          } else if (docUri) {
-            try {
-              const res = await fetch(docUri);
-              rawText = await res.text();
-            } catch {}
-          }
-          let dirty = marked.parse(rawText || '');
-
-          // Rewrite <embed>/<object> SVG references to <img> so they render properly
-          const pre = new DOMParser().parseFromString(dirty, 'text/html');
-          const embeds = Array.from(pre.querySelectorAll('embed[src], object[data]'));
-          if (embeds.length) {
-            for (const el of embeds) {
-              const src = el.getAttribute('src') || el.getAttribute('data') || '';
-              const type = (el.getAttribute('type') || '').toLowerCase();
-              const looksSvg = type.includes('svg') || (!type && /\.svg($|[?#])/i.test(src));
-              if (!src || !looksSvg) continue;
-              const img = pre.createElement('img');
-              img.setAttribute('src', src);
-              img.setAttribute('alt', el.getAttribute('aria-label') || el.getAttribute('title') || 'svg diagram');
-              el.replaceWith(img);
-            }
-            dirty = pre.body.innerHTML;
-          }
-
-          // Sanitizer config that keeps inline SVG renderable (draw.io/Excalidraw, foreignObject, use)
-          const MD_SANITIZE = {
-            ADD_TAGS: ['use', 'foreignObject'],
-            ADD_ATTR: ['target', 'id', 'xlink:href'],
-            HTML_INTEGRATION_POINTS: { 'annotation-xml': true, foreignobject: true, desc: true, title: true }
-          };
-          const clean = DOMPurify.sanitize(dirty, MD_SANITIZE);
-          const postDoc = new DOMParser().parseFromString(clean, 'text/html');
-
-          // Restrict <use> tags to only in-document fragments for security
-          postDoc.querySelectorAll('use').forEach(u => {
-            ['href', 'xlink:href'].forEach(attr => {
-              const val = u.getAttribute(attr);
-              if (val && !val.startsWith('#')) u.removeAttribute(attr);
-            });
-          });
-
-          // Scale inline SVG without explicit dimensions but with viewBox
-          postDoc.querySelectorAll('svg').forEach(s => {
-            if (!s.getAttribute('width') && !s.getAttribute('height') && s.getAttribute('viewBox')) {
-              s.setAttribute('width', '100%');
-            }
-          });
-
-          // Ensure links open in new tab
-          postDoc.querySelectorAll('a[href]').forEach(a => {
-            a.setAttribute('target', '_blank');
-            a.setAttribute('rel', 'noopener noreferrer');
-          });
-
-          root.innerHTML = '<div class="reader-body">' + postDoc.body.innerHTML + '</div>';
-        } else if (docKind === 'html') {
-          let rawHtml = '';
-          if (docBase64) {
-            rawHtml = new TextDecoder().decode(base64ToUint8Array(docBase64));
-          } else if (docUri) {
-            try {
-              const res = await fetch(docUri);
-              if (res.ok) rawHtml = await res.text();
-            } catch (err) {
-              console.warn('Could not fetch HTML from docUri:', err);
-            }
-          }
-
-          const sanitizer = (typeof DOMPurify !== 'undefined' ? DOMPurify : (typeof window !== 'undefined' ? window.DOMPurify : null));
-          const cleanHtml = sanitizer && typeof sanitizer.sanitize === 'function'
-            ? sanitizer.sanitize(rawHtml, {
-                ADD_TAGS: ['style', 'link', 'use', 'foreignObject', 'iframe', 'svg', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
-                ADD_ATTR: ['target', 'id', 'xlink:href', 'src', 'href', 'style', 'class', 'width', 'height', 'align', 'colspan', 'rowspan'],
-                WHOLE_DOCUMENT: false,
-              })
-            : rawHtml;
-
-          window._rawHtmlCode = rawHtml;
-          window._cleanHtmlPreview = cleanHtml;
-
-          window.switchHtmlView = function(mode) {
-            const previewEl = document.getElementById('htmlPreviewPane');
-            const codeEl = document.getElementById('htmlCodePane');
-            const btnPrev = document.getElementById('btnHtmlPreview');
-            const btnCode = document.getElementById('btnHtmlCode');
-            if (mode === 'preview') {
-              if (previewEl) previewEl.style.display = 'block';
-              if (codeEl) codeEl.style.display = 'none';
-              if (btnPrev) btnPrev.classList.add('active');
-              if (btnCode) btnCode.classList.remove('active');
-            } else {
-              if (previewEl) previewEl.style.display = 'none';
-              if (codeEl) codeEl.style.display = 'block';
-              if (btnPrev) btnPrev.classList.remove('active');
-              if (btnCode) btnCode.classList.add('active');
-            }
-          };
-
-          root.innerHTML = '<div class="reader-body">' +
-            '<div class="html-toolbar">' +
-              '<span style="font-size:12px; font-weight:600; color:var(--muted);">🌐 HTML Document</span>' +
-              '<div class="html-toggle-group">' +
-                '<button type="button" id="btnHtmlPreview" class="html-toggle-btn active" onclick="switchHtmlView(\'preview\')">👁️ Preview</button>' +
-                '<button type="button" id="btnHtmlCode" class="html-toggle-btn" onclick="switchHtmlView(\'code\')">&lt;/&gt; Source</button>' +
-              '</div>' +
-            '</div>' +
-            '<div id="htmlPreviewPane" class="html-preview-content" style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:18px; min-height:400px; overflow-x:auto;">' +
-              (cleanHtml || '<div style="padding:40px; text-align:center; color:var(--muted);">Empty HTML document</div>') +
-            '</div>' +
-            '<div id="htmlCodePane" style="display:none;">' +
-              '<pre class="reader-code" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.5; padding:16px; background:var(--panel); border:1px solid var(--border); border-radius:10px;">' + escapeHtml(rawHtml) + '</pre>' +
-            '</div>' +
           '</div>';
         } else {
-          // Plain Text
-          // Guard: Detect if binary JPEG or image was incorrectly routed to plain text
-          var isImageB64 = docBase64 && (
-            docBase64.indexOf('/9j/') === 0 ||
-            docBase64.indexOf('iVBORw0KGgo') === 0 ||
-            docBase64.indexOf('R0lGOD') === 0 ||
-            docBase64.indexOf('UklGR') === 0 ||
-            docBase64.slice(0, 50).indexOf('JFIF') !== -1 ||
-            docBase64.slice(0, 50).indexOf('Exif') !== -1
-          );
-
-          if (isImageB64) {
-            var mType = 'image/jpeg';
-            if (docBase64.indexOf('iVBORw0KGgo') === 0) mType = 'image/png';
-            else if (docBase64.indexOf('R0lGOD') === 0) mType = 'image/gif';
-            else if (docBase64.indexOf('UklGR') === 0) mType = 'image/webp';
-            var imgSrc = 'data:' + mType + ';base64,' + docBase64;
-            root.innerHTML = '<div class="image-viewer-container" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:85vh;padding:20px;">' +
-              '<img src="' + imgSrc + '" alt="' + escapeHtml(docName) + '" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.15);" />' +
-              '<div style="margin-top:14px;font-size:12px;color:var(--muted);">' + escapeHtml(docName) + '</div>' +
-            '</div>';
-            return;
-          }
-
-          let rawText = '';
-          if (docBase64) {
-            rawText = new TextDecoder().decode(base64ToUint8Array(docBase64));
-            if (rawText && (rawText.indexOf('JFIF') !== -1 || rawText.indexOf('Exif') !== -1)) {
-              var imgSrc2 = 'data:image/jpeg;base64,' + docBase64;
-              root.innerHTML = '<div class="image-viewer-container" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:85vh;padding:20px;">' +
-                '<img src="' + imgSrc2 + '" alt="' + escapeHtml(docName) + '" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.15);" />' +
-                '<div style="margin-top:14px;font-size:12px;color:var(--muted);">' + escapeHtml(docName) + '</div>' +
-              '</div>';
-              return;
+          // Document Reader: Markdown / DOCX / HTML / Text
+          let rawHtml = '';
+          if (docKind === 'docx') {
+            if (!docBase64) throw new Error('No DOCX data');
+            const res = await mammoth.convertToHtml({ arrayBuffer: base64ToUint8Array(docBase64) });
+            rawHtml = DOMPurify.sanitize(res.value);
+          } else if (docKind === 'markdown') {
+            let rawText = '';
+            if (docBase64) {
+              rawText = decodeUtf8Base64(docBase64);
+            } else if (docUri) {
+              try {
+                const res = await fetch(docUri);
+                if (res.ok) rawText = await res.text();
+              } catch {}
             }
-          } else if (docUri) {
-            try {
-              const res = await fetch(docUri);
-              rawText = await res.text();
-            } catch {}
-          }
-          if (docKind === 'html') {
-            root.innerHTML = '<div class="reader-body">' + DOMPurify.sanitize(rawText || '') + '</div>';
+            var markedParser = (typeof marked !== 'undefined' ? marked : (typeof window !== 'undefined' ? window.marked : null));
+            let dirty = '';
+            if (markedParser && typeof markedParser.parse === 'function') {
+              dirty = markedParser.parse(rawText || '');
+            } else if (typeof markedParser === 'function') {
+              dirty = markedParser(rawText || '');
+            } else {
+              dirty = '<pre>' + escapeHtml(rawText || '') + '</pre>';
+            }
+            rawHtml = (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) ? DOMPurify.sanitize(dirty) : dirty;
+          } else if (docKind === 'html') {
+            let str = '';
+            if (docBase64) str = decodeUtf8Base64(docBase64);
+            else if (docUri) {
+              try {
+                const res = await fetch(docUri);
+                if (res.ok) str = await res.text();
+              } catch {}
+            }
+            rawHtml = (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) ? DOMPurify.sanitize(str) : str;
           } else {
-            const pre = document.createElement('pre');
-            pre.textContent = rawText || '(Empty document)';
-            root.innerHTML = '<div class="reader-body"></div>';
-            root.firstElementChild.appendChild(pre);
+            // Text / Plain
+            let str = '';
+            if (docBase64) str = decodeUtf8Base64(docBase64);
+            else if (docUri) {
+              try {
+                const res = await fetch(docUri);
+                if (res.ok) str = await res.text();
+              } catch {}
+            }
+            rawHtml = '<pre style="white-space:pre-wrap; font-family:inherit; line-height:inherit;">' + escapeHtml(str) + '</pre>';
+          }
+
+          if (mode === 'curl') {
+            // 3D Paginated Book Mode for Text / Markdown / DOCX
+            // Split content into readable chunks (~300 words)
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = rawHtml;
+            const nodes = Array.from(tempDiv.children);
+            const pages = [];
+            let currentBlock = [];
+            let currentWordCount = 0;
+
+            if (nodes.length === 0) {
+              pages.push(rawHtml);
+            } else {
+              for (const n of nodes) {
+                const text = n.textContent || '';
+                const words = text.trim().split(/\s+/).length;
+                currentBlock.push(n.outerHTML);
+                currentWordCount += words;
+
+                if (currentWordCount >= 280 || n.tagName === 'H1' || n.tagName === 'HR') {
+                  pages.push(currentBlock.join(''));
+                  currentBlock = [];
+                  currentWordCount = 0;
+                }
+              }
+              if (currentBlock.length > 0) {
+                pages.push(currentBlock.join(''));
+              }
+            }
+
+            const totalPages = Math.max(1, pages.length);
+            root.innerHTML = 
+              '<div class="rs-book-stage">' +
+                '<div class="rs-book-container" id="rsTextContainer">' +
+                  '<div class="rs-tap-left" id="rsTapLeftText" title="Previous Page"></div>' +
+                  '<div class="rs-tap-center" id="rsTapCenterText"></div>' +
+                  '<div class="rs-tap-right" id="rsTapRightText" title="Next Page"></div>' +
+                '</div>' +
+              '</div>';
+            const container = document.getElementById('rsTextContainer');
+            const leaves = [];
+
+            pages.forEach((pageHtml, idx) => {
+              const pNum = idx + 1;
+              const leaf = document.createElement('div');
+              leaf.className = 'rs-page-leaf' + (pNum === 1 ? ' active-leaf' : '');
+              leaf.dataset.page = String(pNum);
+              leaf.style.zIndex = String(totalPages - pNum + 1);
+
+              leaf.innerHTML = 
+                '<div class="rs-page-header">' +
+                  '<span>' + escapeHtml(docName) + '</span>' +
+                  '<span>Page ' + pNum + ' of ' + totalPages + '</span>' +
+                '</div>' +
+                '<div class="rs-page-crease"></div>' +
+                '<div class="rs-paged-body">' +
+                  pageHtml +
+                '</div>' +
+                '<div class="rs-page-footer">' +
+                  '<span>ReadSpace 3D</span>' +
+                  '<span>' + Math.round((pNum / totalPages) * 100) + '%</span>' +
+                '</div>';
+              container.appendChild(leaf);
+              leaves.push(leaf);
+            });
+
+            let curPage = 1;
+            const updateTextLeaves = (targetPage) => {
+              curPage = Math.max(1, Math.min(totalPages, targetPage));
+              leaves.forEach((l, idx) => {
+                const pNum = idx + 1;
+                if (pNum < curPage) {
+                  l.classList.add('turned');
+                  l.classList.remove('active-leaf');
+                } else if (pNum === curPage) {
+                  l.classList.remove('turned');
+                  l.classList.add('active-leaf');
+                } else {
+                  l.classList.remove('turned');
+                  l.classList.remove('active-leaf');
+                }
+              });
+              updateScrubber(curPage, totalPages);
+            };
+
+            window.rsNextPage = () => updateTextLeaves(curPage + 1);
+            window.rsPrevPage = () => updateTextLeaves(curPage - 1);
+            window.rsGoToPage = (p) => updateTextLeaves(p);
+
+            document.getElementById('rsTapLeftText').onclick = () => { window.rsPrevPage(); showScrubberBriefly(); };
+            document.getElementById('rsTapRightText').onclick = () => { window.rsNextPage(); showScrubberBriefly(); };
+            document.getElementById('rsTapCenterText').onclick = () => showScrubberBriefly();
+
+            let touchStartX = 0;
+            container.addEventListener('touchstart', (e) => {
+              if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
+            }, { passive: true });
+            container.addEventListener('touchend', (e) => {
+              if (e.changedTouches.length === 1) {
+                const dx = e.changedTouches[0].clientX - touchStartX;
+                if (Math.abs(dx) > 42) {
+                  if (dx < 0) window.rsNextPage();
+                  else window.rsPrevPage();
+                  showScrubberBriefly();
+                }
+              }
+            }, { passive: true });
+
+            updateTextLeaves(1);
+          } else {
+            // Continuous Vertical Scroll Mode
+            root.innerHTML = '<div class="reader-body">' + rawHtml + '</div>';
+            updateScrubber(1, 1);
           }
         }
       } catch (e) {
@@ -734,35 +1521,231 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
       }
     }
 
-    renderDoc();
+    // Scrubber Bar Event Bindings
+    document.getElementById('rsBtnPrev').onclick = () => {
+      if (window.rsPrevPage) window.rsPrevPage();
+      showScrubberBriefly();
+    };
+    document.getElementById('rsBtnNext').onclick = () => {
+      if (window.rsNextPage) window.rsNextPage();
+      showScrubberBriefly();
+    };
+    document.getElementById('rsScrubSlider').oninput = (e) => {
+      const p = Number(e.target.value);
+      if (window.rsGoToPage) window.rsGoToPage(p);
+      showScrubberBriefly();
+    };
+    document.getElementById('rsBtnMode').onclick = () => {
+      window.__readerState.mode = window.__readerState.mode === 'curl' ? 'scroll' : 'curl';
+      renderDoc();
+      showScrubberBriefly();
+    };
 
+    // Keyboard support
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') {
+        if (window.rsNextPage) window.rsNextPage();
+        showScrubberBriefly();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        if (window.rsPrevPage) window.rsPrevPage();
+        showScrubberBriefly();
+      }
+    });
+
+    renderDoc();
+    setTimeout(() => showScrubberBriefly(), 800);
+
+    // Dynamic settings listener
     window.addEventListener('message', (event) => {
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         if (data.action === 'updateSettings') {
           const s = data.settings;
-          document.body.style.fontSize = s.fontSize + 'px';
-          document.body.style.lineHeight = s.lineHeight;
+          if (s.fontSize) document.body.style.fontSize = s.fontSize + 'px';
+          if (s.lineHeight) document.body.style.lineHeight = s.lineHeight;
+          if (s.fontFamily) document.body.dataset.font = s.fontFamily;
+          if (s.textAlign) document.body.dataset.align = s.textAlign;
+          if (s.theme) document.body.dataset.theme = s.theme;
+
+          if (s.nightLight !== undefined) {
+            window.__readerState.nightLight = s.nightLight;
+            const overlay = document.getElementById('rsNightLightOverlay');
+            if (overlay) {
+              overlay.style.backgroundColor = 'rgba(255, 150, 10, ' + ((s.nightLight / 100) * 0.42) + ')';
+            }
+          }
+
+          if (s.readingMode && s.readingMode !== window.__readerState.mode) {
+            window.__readerState.mode = s.readingMode;
+            renderDoc();
+          }
+        } else if (data.action === 'nextPage') {
+          if (window.rsNextPage) window.rsNextPage();
+        } else if (data.action === 'prevPage') {
+          if (window.rsPrevPage) window.rsPrevPage();
+        } else if (data.action === 'goToPage') {
+          if (window.rsGoToPage) window.rsGoToPage(data.page);
         }
       } catch {}
     });
   </script>
 </body>
-</html>
-  `;
+</html>`;
+}
+
+export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPositionChange }) => {
+  const webViewRef = useRef<any>(null);
+  const iframeRef = useRef<any>(null);
+  const themeColors = THEMES[settings.theme];
+
+  const [dataOverride, setDataOverride] = useState<string | undefined>(undefined);
+
+  const effectiveDoc = useMemo(
+    () => (dataOverride && dataOverride !== doc.base64Data ? { ...doc, base64Data: dataOverride } : doc),
+    [doc, dataOverride]
+  );
+
+  useEffect(() => {
+    setDataOverride(undefined);
+    if (Platform.OS === 'web') return;
+    if (doc.base64Data) return;
+    const uri = doc.uri || '';
+    const readable = uri.startsWith('content://') || (uri.startsWith('file://') && doc.kind !== 'image' && doc.kind !== 'video' && doc.kind !== 'audio');
+    if (!readable) return;
+    let dead = false;
+    void (async () => {
+      try {
+        const { StorageAccessFramework } = FileSystem;
+        const data = uri.startsWith('content://') && StorageAccessFramework
+          ? await StorageAccessFramework.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
+          : await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        if (!dead && data) setDataOverride(data);
+      } catch (e) {
+        console.warn('[readspace] could not re-read file data for reader:', e);
+      }
+    })();
+    return () => {
+      dead = true;
+    };
+  }, [doc.id, doc.uri, doc.base64Data]);
+
+  const htmlContent = useMemo(() => {
+    if (doc.kind === 'image' && Platform.OS !== 'web') return '';
+    return buildReaderHtml(effectiveDoc, settings, themeColors);
+  }, [
+    doc.kind,
+    effectiveDoc,
+    settings.theme,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.fontFamily,
+    settings.readingMode,
+    settings.nightLight,
+    settings.textAlign,
+  ]);
+
+  if (doc.kind === 'image' && (Platform.OS as string) !== 'web') {
+    const imageUri = doc.base64Data
+      ? (doc.base64Data.startsWith('data:') ? doc.base64Data : `data:${doc.mime || 'image/jpeg'};base64,${doc.base64Data}`)
+      : doc.uri;
+
+    return <NativeImageViewer imageUri={imageUri || ''} name={doc.name} themeColors={themeColors} />;
+  }
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleWindowMessage = (event: MessageEvent) => {
+        try {
+          const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (data?.action === 'position' && onPositionChange) {
+            onPositionChange(data.position);
+          }
+        } catch {}
+      };
+      window.addEventListener('message', handleWindowMessage);
+      return () => window.removeEventListener('message', handleWindowMessage);
+    }
+  }, [onPositionChange]);
+
+  useEffect(() => {
+    const payload = JSON.stringify({
+      action: 'updateSettings',
+      settings: {
+        theme: settings.theme,
+        fontSize: settings.fontSize,
+        lineHeight: settings.lineHeight,
+        fontFamily: settings.fontFamily,
+        readingMode: settings.readingMode,
+        nightLight: settings.nightLight,
+        textAlign: settings.textAlign,
+      },
+    });
+
+    if (Platform.OS === 'web') {
+      if (iframeRef.current?.contentWindow) {
+        iframeRef.current.contentWindow.postMessage(payload, '*');
+      }
+    } else {
+      if (webViewRef.current?.postMessage) {
+        webViewRef.current.postMessage(payload);
+      }
+    }
+  }, [settings]);
+
+  const handleMessage = (event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.action === 'position' && onPositionChange) {
+        onPositionChange(data.position);
+      }
+    } catch {}
+  };
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.container}>
+        <iframe
+          ref={iframeRef}
+          srcDoc={htmlContent}
+          style={{
+            width: '100%',
+            height: '100%',
+            border: 'none',
+            backgroundColor: themeColors.bg,
+          }}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      <iframe
-        ref={iframeRef}
-        srcDoc={htmlContent}
-        style={{
-          width: '100%',
-          height: '100%',
-          border: 'none',
-          backgroundColor: themeColors.bg,
-        }}
-      />
+      {NativeWebView ? (
+        <NativeWebView
+          ref={webViewRef}
+          originWhitelist={['*']}
+          source={{ html: htmlContent }}
+          onMessage={handleMessage}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          allowFileAccess={true}
+          allowFileAccessFromFileURLs={true}
+          allowUniversalAccessFromFileURLs={true}
+          allowsInlineMediaPlayback={true}
+          mediaPlaybackRequiresUserAction={false}
+          scalesPageToFit={false}
+          style={[styles.webview, { backgroundColor: themeColors.bg }]}
+          renderLoading={() => (
+            <View style={styles.loading}>
+              <ActivityIndicator size="large" color={themeColors.accent} />
+            </View>
+          )}
+        />
+      ) : (
+        <View style={styles.loading}>
+          <Text style={{ color: themeColors.fg }}>WebView unavailable on this platform</Text>
+        </View>
+      )}
     </View>
   );
 };
@@ -770,7 +1753,68 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    overflow: 'hidden',
+  },
+  webview: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  loading: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageNativeContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageGestureArea: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageHero: {
     width: '100%',
     height: '100%',
+  },
+  imageControlPill: {
+    position: 'absolute',
+    bottom: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 24,
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    gap: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  imagePillBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imagePillBtnWide: {
+    width: 44,
+  },
+  imagePillText: {
+    fontSize: 20,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  imagePillBadge: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  imagePillLabel: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

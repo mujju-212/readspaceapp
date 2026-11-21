@@ -26,6 +26,11 @@ import {
   Music,
   Video,
   Download,
+  BookOpen,
+  Scroll,
+  Sun,
+  AlignLeft,
+  AlignJustify,
 } from 'lucide-react-native';
 import { HybridReader } from '../components/HybridReader';
 import { FolderExplorerModal, WorkspaceExplorerView } from '../components/FolderExplorerModal';
@@ -538,81 +543,263 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
         >
           <TouchableOpacity
             activeOpacity={1}
-            style={[styles.modalSheet, { backgroundColor: theme.card, borderColor: theme.border }]}
+            style={[styles.modalSheet, { backgroundColor: theme.card, borderColor: theme.border, maxHeight: '88%' }]}
           >
-            <Text style={[styles.modalTitle, { color: theme.fg }]}>Reader Appearance</Text>
+            <View style={styles.sheetHeader}>
+              <Text style={[styles.modalTitle, { color: theme.fg }]}>Reader Appearance</Text>
+              <TouchableOpacity
+                onPress={() => setShowSettingsModal(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <X size={18} color={theme.muted} />
+              </TouchableOpacity>
+            </View>
 
-            {/* Themes */}
-            <Text style={[styles.sheetLabel, { color: theme.muted }]}>THEME</Text>
-            <View style={styles.themesRow}>
-              {(['ice', 'light', 'dark', 'sepia'] as ThemeName[]).map((t) => (
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+              {/* Reading Mode (Google Play Books 3D Curl vs Continuous Scroll) */}
+              <Text style={[styles.sheetLabel, { color: theme.muted }]}>PAGE TURNING MODE</Text>
+              <View style={styles.modeRow}>
                 <TouchableOpacity
-                  key={t}
                   style={[
-                    styles.themePill,
-                    { backgroundColor: THEMES[t].card, borderColor: THEMES[t].border },
-                    settings.theme === t && { borderWidth: 2, borderColor: theme.accent },
+                    styles.modeCard,
+                    { backgroundColor: theme.panel, borderColor: theme.border },
+                    (settings.readingMode || 'curl') === 'curl' && { borderColor: theme.accent, backgroundColor: theme.sel },
                   ]}
-                  onPress={() => onUpdateSettings({ theme: t })}
+                  onPress={() => onUpdateSettings({ readingMode: 'curl' })}
                 >
-                  <Text style={[styles.themePillText, { color: THEMES[t].fg }]}>
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
+                  <BookOpen size={18} color={(settings.readingMode || 'curl') === 'curl' ? theme.accent : theme.muted} />
+                  <Text style={[styles.modeCardTitle, { color: (settings.readingMode || 'curl') === 'curl' ? theme.accent : theme.fg }]}>
+                    3D Page Curl
+                  </Text>
+                  <Text style={[styles.modeCardDesc, { color: theme.muted }]}>
+                    Curved 3D page curl with spine crease & shadows
                   </Text>
                 </TouchableOpacity>
-              ))}
-            </View>
 
-            {/* Font Size */}
-            <Text style={[styles.sheetLabel, { color: theme.muted }]}>FONT SIZE</Text>
-            <View style={styles.fontSizeRow}>
-              <TouchableOpacity
-                style={[styles.fontBtn, { backgroundColor: theme.sel }]}
-                onPress={() => onUpdateSettings({ fontSize: Math.max(12, settings.fontSize - 2) })}
-              >
-                <Text style={[styles.fontBtnText, { color: theme.accent }]}>A−</Text>
-              </TouchableOpacity>
-              <Text style={[styles.fontSizeLabel, { color: theme.fg }]}>{settings.fontSize}px</Text>
-              <TouchableOpacity
-                style={[styles.fontBtn, { backgroundColor: theme.sel }]}
-                onPress={() => onUpdateSettings({ fontSize: Math.min(28, settings.fontSize + 2) })}
-              >
-                <Text style={[styles.fontBtnText, { color: theme.accent }]}>A+</Text>
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  style={[
+                    styles.modeCard,
+                    { backgroundColor: theme.panel, borderColor: theme.border },
+                    settings.readingMode === 'scroll' && { borderColor: theme.accent, backgroundColor: theme.sel },
+                  ]}
+                  onPress={() => onUpdateSettings({ readingMode: 'scroll' })}
+                >
+                  <Scroll size={18} color={settings.readingMode === 'scroll' ? theme.accent : theme.muted} />
+                  <Text style={[styles.modeCardTitle, { color: settings.readingMode === 'scroll' ? theme.accent : theme.fg }]}>
+                    Continuous
+                  </Text>
+                  <Text style={[styles.modeCardDesc, { color: theme.muted }]}>
+                    Standard vertical continuous document scroll
+                  </Text>
+                </TouchableOpacity>
+              </View>
 
-            {/* Zen Mode / Focus */}
-            <Text style={[styles.sheetLabel, { color: theme.muted }]}>FOCUS</Text>
-            <TouchableOpacity
-              style={[
-                styles.zenModeRow,
-                { backgroundColor: isZenMode ? theme.sel : theme.panel, borderColor: isZenMode ? theme.accent : theme.border },
-              ]}
-              onPress={() => {
-                toggleZenMode();
-                setShowSettingsModal(false);
-              }}
-              activeOpacity={0.8}
-            >
-              <Maximize2 size={18} color={isZenMode ? theme.accent : theme.fg} />
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={[styles.zenModeTitle, { color: theme.fg }]}>Zen Mode</Text>
-                <Text style={[styles.zenModeSubtitle, { color: theme.muted }]}>
-                  Distraction-free reading without toolbars
+              {/* Night Light Amber Warmth (Google Play Books Night Light Shader replica) */}
+              <View style={styles.labelWithBadge}>
+                <Text style={[styles.sheetLabel, { color: theme.muted, marginBottom: 0 }]}>NIGHT LIGHT (WARMTH)</Text>
+                <Text style={[styles.sliderValueText, { color: (settings.nightLight || 0) > 0 ? '#d97706' : theme.muted }]}>
+                  {(settings.nightLight || 0) > 0 ? `${settings.nightLight}% Warmth` : 'Off'}
                 </Text>
               </View>
-              <View style={[styles.zenStatusBadge, { backgroundColor: isZenMode ? theme.accent : theme.border }]}>
-                <Text style={[styles.zenStatusBadgeText, { color: isZenMode ? theme.accentFg : theme.muted }]}>
-                  {isZenMode ? 'ACTIVE' : 'OFF'}
-                </Text>
+              <View style={styles.nightLightRow}>
+                {[0, 25, 50, 75, 100].map((val) => {
+                  const active = (settings.nightLight || 0) === val;
+                  return (
+                    <TouchableOpacity
+                      key={val}
+                      style={[
+                        styles.nightLightPill,
+                        {
+                          backgroundColor: val === 0 ? theme.panel : `rgba(251, 191, 36, ${0.12 + (val / 100) * 0.3})`,
+                          borderColor: active ? '#f59e0b' : theme.border,
+                        },
+                        active && { borderWidth: 2 },
+                      ]}
+                      onPress={() => onUpdateSettings({ nightLight: val })}
+                    >
+                      {val > 0 && <Sun size={12} color={active ? '#d97706' : '#b45309'} style={{ marginRight: 3 }} />}
+                      <Text
+                        style={[
+                          styles.nightLightText,
+                          { color: active ? (val === 0 ? theme.accent : '#d97706') : theme.fg },
+                        ]}
+                      >
+                        {val === 0 ? 'Off' : `${val}%`}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
-            </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.closeModalBtn, { backgroundColor: theme.accent }]}
-              onPress={() => setShowSettingsModal(false)}
-            >
-              <Text style={[styles.closeModalBtnText, { color: theme.accentFg }]}>Done</Text>
-            </TouchableOpacity>
+              {/* Themes */}
+              <Text style={[styles.sheetLabel, { color: theme.muted }]}>THEME</Text>
+              <View style={styles.themesRow}>
+                {(['ice', 'light', 'dark', 'sepia'] as ThemeName[]).map((t) => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[
+                      styles.themePill,
+                      { backgroundColor: THEMES[t].card, borderColor: THEMES[t].border },
+                      settings.theme === t && { borderWidth: 2, borderColor: theme.accent },
+                    ]}
+                    onPress={() => onUpdateSettings({ theme: t })}
+                  >
+                    <Text style={[styles.themePillText, { color: THEMES[t].fg }]}>
+                      {t.charAt(0).toUpperCase() + t.slice(1)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Font Family */}
+              <Text style={[styles.sheetLabel, { color: theme.muted }]}>TYPEFACE</Text>
+              <View style={styles.fontFamilyRow}>
+                {[
+                  { key: 'system', label: 'System' },
+                  { key: 'serif', label: 'Serif' },
+                  { key: 'mono', label: 'Mono' },
+                  { key: 'dyslexic', label: 'Dyslexic' },
+                ].map((f) => {
+                  const active = (settings.fontFamily || 'system') === f.key;
+                  return (
+                    <TouchableOpacity
+                      key={f.key}
+                      style={[
+                        styles.fontFamilyPill,
+                        { backgroundColor: theme.panel, borderColor: theme.border },
+                        active && { borderColor: theme.accent, backgroundColor: theme.sel },
+                      ]}
+                      onPress={() => onUpdateSettings({ fontFamily: f.key as any })}
+                    >
+                      <Text
+                        style={[
+                          styles.fontFamilyText,
+                          { color: active ? theme.accent : theme.fg },
+                        ]}
+                      >
+                        {f.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Font Size & Alignment */}
+              <View style={styles.dualControlsRow}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={[styles.sheetLabel, { color: theme.muted }]}>FONT SIZE</Text>
+                  <View style={styles.fontSizeRow}>
+                    <TouchableOpacity
+                      style={[styles.fontBtn, { backgroundColor: theme.sel }]}
+                      onPress={() => onUpdateSettings({ fontSize: Math.max(12, settings.fontSize - 2) })}
+                    >
+                      <Text style={[styles.fontBtnText, { color: theme.accent }]}>A−</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.fontSizeLabel, { color: theme.fg }]}>{settings.fontSize}px</Text>
+                    <TouchableOpacity
+                      style={[styles.fontBtn, { backgroundColor: theme.sel }]}
+                      onPress={() => onUpdateSettings({ fontSize: Math.min(32, settings.fontSize + 2) })}
+                    >
+                      <Text style={[styles.fontBtnText, { color: theme.accent }]}>A+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={[styles.sheetLabel, { color: theme.muted }]}>ALIGNMENT</Text>
+                  <View style={styles.alignRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.alignBtn,
+                        { backgroundColor: theme.panel, borderColor: theme.border },
+                        (settings.textAlign || 'left') === 'left' && { borderColor: theme.accent, backgroundColor: theme.sel },
+                      ]}
+                      onPress={() => onUpdateSettings({ textAlign: 'left' })}
+                    >
+                      <AlignLeft size={15} color={(settings.textAlign || 'left') === 'left' ? theme.accent : theme.muted} />
+                      <Text style={[styles.alignBtnText, { color: (settings.textAlign || 'left') === 'left' ? theme.accent : theme.fg }]}>
+                        Left
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.alignBtn,
+                        { backgroundColor: theme.panel, borderColor: theme.border },
+                        settings.textAlign === 'justify' && { borderColor: theme.accent, backgroundColor: theme.sel },
+                      ]}
+                      onPress={() => onUpdateSettings({ textAlign: 'justify' })}
+                    >
+                      <AlignJustify size={15} color={settings.textAlign === 'justify' ? theme.accent : theme.muted} />
+                      <Text style={[styles.alignBtnText, { color: settings.textAlign === 'justify' ? theme.accent : theme.fg }]}>
+                        Justify
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+
+              {/* Line Spacing */}
+              <Text style={[styles.sheetLabel, { color: theme.muted }]}>LINE SPACING</Text>
+              <View style={styles.spacingRow}>
+                {[
+                  { key: 1.4, label: 'Compact' },
+                  { key: 1.6, label: 'Normal' },
+                  { key: 1.9, label: 'Relaxed' },
+                ].map((s) => {
+                  const active = Math.abs((settings.lineHeight || 1.6) - s.key) < 0.05;
+                  return (
+                    <TouchableOpacity
+                      key={s.key}
+                      style={[
+                        styles.spacingPill,
+                        { backgroundColor: theme.panel, borderColor: theme.border },
+                        active && { borderColor: theme.accent, backgroundColor: theme.sel },
+                      ]}
+                      onPress={() => onUpdateSettings({ lineHeight: s.key })}
+                    >
+                      <Text style={[styles.spacingText, { color: active ? theme.accent : theme.fg }]}>
+                        {s.label} ({s.key})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Zen Mode / Focus */}
+              <Text style={[styles.sheetLabel, { color: theme.muted }]}>FOCUS</Text>
+              <TouchableOpacity
+                style={[
+                  styles.zenModeRow,
+                  { backgroundColor: isZenMode ? theme.sel : theme.panel, borderColor: isZenMode ? theme.accent : theme.border },
+                ]}
+                onPress={() => {
+                  toggleZenMode();
+                  setShowSettingsModal(false);
+                }}
+                activeOpacity={0.8}
+              >
+                <Maximize2 size={18} color={isZenMode ? theme.accent : theme.fg} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={[styles.zenModeTitle, { color: theme.fg }]}>Zen Mode</Text>
+                  <Text style={[styles.zenModeSubtitle, { color: theme.muted }]}>
+                    Distraction-free reading without toolbars
+                  </Text>
+                </View>
+                <View style={[styles.zenStatusBadge, { backgroundColor: isZenMode ? theme.accent : theme.border }]}>
+                  <Text style={[styles.zenStatusBadgeText, { color: isZenMode ? theme.accentFg : theme.muted }]}>
+                    {isZenMode ? 'ACTIVE' : 'OFF'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.closeModalBtn, { backgroundColor: theme.accent }]}
+                onPress={() => setShowSettingsModal(false)}
+              >
+                <Text style={[styles.closeModalBtnText, { color: theme.accentFg }]}>Done</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
@@ -667,20 +854,127 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     borderWidth: 1,
-    padding: 24,
-    paddingBottom: 36,
+    padding: 20,
+    paddingBottom: 28,
   },
-  modalTitle: { fontSize: 17, fontWeight: '700', marginBottom: 16 },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  modalTitle: { fontSize: 17, fontWeight: '700' },
   sheetLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, marginBottom: 8 },
-  themesRow: { flexDirection: 'row', gap: 8, marginBottom: 20 },
+  labelWithBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  sliderValueText: { fontSize: 11, fontWeight: '700' },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 18,
+  },
+  modeCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'flex-start',
+  },
+  modeCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  modeCardDesc: {
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  nightLightRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 18,
+  },
+  nightLightPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  nightLightText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  themesRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
   themePill: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 9,
     borderRadius: 10,
     borderWidth: 1,
     alignItems: 'center',
   },
   themePillText: { fontSize: 12, fontWeight: '600' },
+  fontFamilyRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 18,
+  },
+  fontFamilyPill: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  fontFamilyText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  dualControlsRow: {
+    flexDirection: 'row',
+    marginBottom: 18,
+  },
+  alignRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  alignBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  alignBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  spacingRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 18,
+  },
+  spacingPill: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  spacingText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
   fontSizeRow: {
     flexDirection: 'row',
     alignItems: 'center',
