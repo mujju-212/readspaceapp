@@ -15,6 +15,9 @@ import {
 import * as FileSystem from 'expo-file-system';
 import { MobileDoc, ReaderSettings } from '../types';
 import { THEMES } from '../theme/colors';
+import { Api } from '../services/api';
+import { Storage } from '../services/storage';
+import { getWorkspaceBlob } from '../services/webIdb';
 import {
   OFFLINE_MARKED_B64,
   OFFLINE_DOMPURIFY_B64,
@@ -1608,15 +1611,24 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
   const themeColors = THEMES[settings.theme];
 
   const [dataOverride, setDataOverride] = useState<string | undefined>(undefined);
-  const needsDiskRead = !doc.base64Data && Boolean(
-    Platform.OS !== 'web' &&
-    doc.uri &&
-    (doc.uri.startsWith('content://') || doc.uri.startsWith('file://')) &&
-    doc.kind !== 'image' &&
-    doc.kind !== 'video' &&
-    doc.kind !== 'audio'
+  const isDriveDoc = Boolean(
+    doc.isDrive ||
+    doc.driveFileId ||
+    (doc.uri && doc.uri.startsWith('gdrive://')) ||
+    (doc.id && doc.id.startsWith('drive_'))
   );
-  const [isFileReading, setIsFileReading] = useState<boolean>(needsDiskRead);
+
+  const needsFileRead = !doc.base64Data && Boolean(
+    isDriveDoc ||
+    (Platform.OS !== 'web' &&
+      doc.uri &&
+      (doc.uri.startsWith('content://') || doc.uri.startsWith('file://')) &&
+      doc.kind !== 'image' &&
+      doc.kind !== 'video' &&
+      doc.kind !== 'audio')
+  );
+
+  const [isFileReading, setIsFileReading] = useState<boolean>(needsFileRead);
 
   const effectiveDoc = useMemo(
     () => (dataOverride && dataOverride !== doc.base64Data ? { ...doc, base64Data: dataOverride } : doc),
@@ -1625,10 +1637,100 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 
   useEffect(() => {
     setDataOverride(undefined);
-    if (Platform.OS === 'web' || doc.base64Data) {
+    if (doc.base64Data) {
       setIsFileReading(false);
       return;
     }
+
+    let dead = false;
+
+    // 1. Google Drive Document — download file content via Api service
+    if (isDriveDoc) {
+      const fileId =
+        doc.driveFileId ||
+        (doc.uri ? doc.uri.replace('gdrive://', '') : doc.id.replace('drive_', ''));
+
+      if (fileId) {
+        setIsFileReading(true);
+        let exportMime: string | undefined;
+        if (doc.mime?.includes('google-apps.document') || doc.mime?.includes('google-apps.presentation')) {
+          exportMime = 'application/pdf';
+        } else if (doc.mime?.includes('google-apps.spreadsheet')) {
+          exportMime = 'text/csv';
+        }
+
+        void (async () => {
+          try {
+            const res = await Api.downloadDriveFile(fileId, exportMime);
+            if (!dead && res.base64) {
+              setDataOverride(res.base64);
+              void Storage.saveDoc({ ...doc, base64Data: res.base64 });
+            }
+          } catch (err) {
+            console.warn('[HybridReader] Drive download error:', err);
+          } finally {
+            if (!dead) setIsFileReading(false);
+          }
+        })();
+        return () => {
+          dead = true;
+        };
+      }
+    }
+
+    // 2. Web browser: check IndexedDB / blob restoration
+    if (Platform.OS === 'web') {
+      setIsFileReading(true);
+      void (async () => {
+        try {
+          const blob = await getWorkspaceBlob((doc as any).workspaceId, doc.name);
+          if (!dead && blob) {
+            const b64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const res = reader.result as string;
+                resolve(res.includes(',') ? res.split(',')[1] : res);
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            if (!dead && b64) {
+              setDataOverride(b64);
+              void Storage.saveDoc({ ...doc, base64Data: b64 });
+            }
+          } else if (doc.uri && (doc.uri.startsWith('blob:') || doc.uri.startsWith('http') || doc.uri.startsWith('data:'))) {
+            if (doc.uri.startsWith('data:')) {
+              const b64 = doc.uri.split(',')[1] || doc.uri;
+              if (!dead) setDataOverride(b64);
+            } else {
+              const res = await fetch(doc.uri);
+              if (res.ok) {
+                const b = await res.blob();
+                const b64 = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const r = reader.result as string;
+                    resolve(r.includes(',') ? r.split(',')[1] : r);
+                  };
+                  reader.onerror = reject;
+                  reader.readAsDataURL(b);
+                });
+                if (!dead && b64) setDataOverride(b64);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[HybridReader] web blob restore error:', e);
+        } finally {
+          if (!dead) setIsFileReading(false);
+        }
+      })();
+      return () => {
+        dead = true;
+      };
+    }
+
+    // 3. Android / iOS native filesystem read
     const uri = doc.uri || '';
     const readable = uri.startsWith('content://') || (uri.startsWith('file://') && doc.kind !== 'image' && doc.kind !== 'video' && doc.kind !== 'audio');
     if (!readable) {
@@ -1637,14 +1739,16 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     }
 
     setIsFileReading(true);
-    let dead = false;
     void (async () => {
       try {
         const { StorageAccessFramework } = FileSystem;
         const data = uri.startsWith('content://') && StorageAccessFramework
           ? await StorageAccessFramework.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
           : await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-        if (!dead && data) setDataOverride(data);
+        if (!dead && data) {
+          setDataOverride(data);
+          void Storage.saveDoc({ ...doc, base64Data: data });
+        }
       } catch (e) {
         console.warn('[readspace] could not re-read file data for reader:', e);
       } finally {
@@ -1654,7 +1758,7 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     return () => {
       dead = true;
     };
-  }, [doc.id, doc.uri, doc.base64Data]);
+  }, [doc.id, doc.uri, doc.base64Data, doc.isDrive, doc.driveFileId]);
 
   const htmlContent = useMemo(() => {
     if (doc.kind === 'image' && Platform.OS !== 'web') return '';
