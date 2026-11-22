@@ -25,6 +25,7 @@ import {
   OFFLINE_JSZIP_B64,
   OFFLINE_MAMMOTH_B64,
   OFFLINE_PDFJS_B64,
+  OFFLINE_PAGEFLIP_B64,
 } from '../vendor/offlineVendors';
 
 let NativeWebView: any = null;
@@ -270,41 +271,53 @@ const NativeImageViewer: React.FC<{
 function getRequiredVendorBundles(kind?: string): string[] {
   switch (kind) {
     case 'pdf':
-      return [OFFLINE_PDFJS_B64];
+      return [OFFLINE_PDFJS_B64, OFFLINE_PAGEFLIP_B64];
     case 'markdown':
-      return [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64];
+      return [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
     case 'docx':
-      return [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64];
+      return [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
     case 'pptx':
-      return [OFFLINE_JSZIP_B64];
+      return [OFFLINE_JSZIP_B64, OFFLINE_PAGEFLIP_B64];
     case 'html':
-      return [OFFLINE_DOMPURIFY_B64];
+      return [OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
     default:
-      return [];
+      return [OFFLINE_PAGEFLIP_B64];
   }
 }
 
 function getFallbackCdns(kind?: string) {
+  const pageFlipCdn = '<script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>';
   switch (kind) {
     case 'pdf':
-      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>'];
+      return [
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>',
+        pageFlipCdn,
+      ];
     case 'markdown':
       return [
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>',
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
+        pageFlipCdn,
       ];
     case 'docx':
       return [
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>',
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>',
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
+        pageFlipCdn,
       ];
     case 'pptx':
-      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>'];
+      return [
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>',
+        pageFlipCdn,
+      ];
     case 'html':
-      return ['<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>'];
+      return [
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
+        pageFlipCdn,
+      ];
     default:
-      return [];
+      return [pageFlipCdn];
   }
 }
 
@@ -420,6 +433,76 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       box-sizing: border-box;
       z-index: 20;
     }
+    #rsBook, #rsHtmlBook {
+      box-shadow: 0 16px 50px rgba(0, 0, 0, 0.32), 0 2px 10px rgba(0, 0, 0, 0.12);
+      border-radius: 4px;
+    }
+    .page-canvas-wrap {
+      width: 100%;
+      height: 100%;
+      background: var(--card);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .page-canvas-wrap canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .md-page-leaf {
+      width: 100%;
+      height: 100%;
+      background: var(--card);
+      color: var(--fg);
+      padding: 24px 20px;
+      box-sizing: border-box;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .md-page-content {
+      flex: 1;
+      overflow: hidden;
+      font-size: inherit;
+      line-height: inherit;
+      color: inherit;
+      word-break: break-word;
+    }
+    .md-page-header, .md-page-footer {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      user-select: none;
+    }
+    .md-page-header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+      margin-bottom: 10px;
+    }
+    .md-page-footer {
+      border-top: 1px solid var(--border);
+      padding-top: 6px;
+      margin-top: 10px;
+    }
+    .md-page-content table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin: 8px 0;
+    }
+    .md-page-content th, .md-page-content td {
+      border: 1px solid var(--border);
+      padding: 4px 6px;
+      text-align: left;
+    }
+    .md-page-content th { background: var(--panel); }
     .rs-book-wrapper {
       position: relative;
       width: 100%;
@@ -1289,7 +1372,106 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       const mode = window.__readerState.mode;
 
       if (mode === 'curl') {
-        // 3D Paginated Book Mode
+        const PageFlipCtor = window.St?.PageFlip;
+        if (PageFlipCtor) {
+          root.innerHTML =
+            '<div class="rs-book-stage">' +
+              '<div id="rsHtmlBook"></div>' +
+            '</div>';
+
+          const book = document.getElementById('rsHtmlBook');
+          const temp = document.createElement('div');
+          temp.innerHTML = contentHtml;
+
+          const nodes = Array.from(temp.children);
+          const pages = [];
+          let curElements = [];
+          const MAX_CHARS_PER_PAGE = 750;
+          let charCount = 0;
+
+          for (const node of nodes) {
+            const textLen = (node.textContent || '').length;
+            if (charCount + textLen > MAX_CHARS_PER_PAGE && curElements.length > 0) {
+              pages.push(curElements);
+              curElements = [node];
+              charCount = textLen;
+            } else {
+              curElements.push(node);
+              charCount += textLen;
+            }
+          }
+          if (curElements.length > 0) pages.push(curElements);
+          const totalP = Math.max(1, pages.length);
+
+          pages.forEach((pageNodes, idx) => {
+            const leaf = document.createElement('div');
+            leaf.className = 'md-page-leaf';
+            leaf.dataset.density = 'soft';
+
+            const header = document.createElement('div');
+            header.className = 'md-page-header';
+            header.innerHTML = '<span>' + escapeHtml(docName) + '</span><span>Page ' + (idx + 1) + ' of ' + totalP + '</span>';
+
+            const content = document.createElement('div');
+            content.className = 'md-page-content';
+            pageNodes.forEach(n => content.appendChild(n.cloneNode(true)));
+
+            const footer = document.createElement('div');
+            footer.className = 'md-page-footer';
+            footer.innerHTML = '<span>ReadSpace 3D</span><span>' + Math.round(((idx + 1) / totalP) * 100) + '%</span>';
+
+            leaf.appendChild(header);
+            leaf.appendChild(content);
+            leaf.appendChild(footer);
+            book.appendChild(leaf);
+          });
+
+          const targetW = Math.min(window.innerWidth - 24, 460);
+          const targetH = Math.min(window.innerHeight - 80, 720);
+
+          const pageFlip = new PageFlipCtor(book, {
+            width: targetW,
+            height: targetH,
+            size: 'fixed',
+            showCover: false,
+            usePortrait: true,
+            flippingTime: 600,
+            drawShadow: true,
+            maxShadowOpacity: 0.65,
+            showPageCorners: true,
+            useMouseEvents: true,
+            swipeDistance: 25,
+            mobileScrollSupport: false
+          });
+
+          pageFlip.loadFromHTML(book.querySelectorAll('.md-page-leaf'));
+          window.__pageFlip = pageFlip;
+
+          pageFlip.on('flip', (e) => {
+            const p = e.data + 1;
+            playPaperTurnSound();
+            updateScrubber(p, totalP);
+            showScrubberBriefly();
+          });
+
+          window.rsNextPage = () => {
+            pageFlip.flipNext();
+            showScrubberBriefly();
+          };
+          window.rsPrevPage = () => {
+            pageFlip.flipPrev();
+            showScrubberBriefly();
+          };
+          window.rsGoToPage = (p) => {
+            pageFlip.turnToPage(p - 1);
+            showScrubberBriefly();
+          };
+
+          updateScrubber(1, totalP);
+          return;
+        }
+
+        // 3D Paginated Book Mode (Fallback)
         root.innerHTML =
           '<div class="rs-book-stage">' +
             '<div class="rs-book-wrapper">' +
@@ -1424,334 +1606,147 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
           const totalPages = pdf.numPages;
 
           if (mode === 'curl') {
-            // Google Play Books 3D Realistic Page-Turn Engine
-            root.innerHTML =
-              '<div class="rs-book-stage">' +
-                '<div class="rs-book-wrapper">' +
-                  '<div class="rs-book-edge-left" id="rsEdgeLeft"></div>' +
-                  '<div class="rs-book-container" id="rsBookContainer">' +
-                    '<div class="rs-book-spine"></div>' +
-                    '<div class="rs-page-base" id="rsPageBase">' +
-                      '<div class="rs-page-header">' +
-                        '<span>' + escapeHtml(docName) + '</span>' +
-                        '<span id="rsBaseHeaderPage">Page 1 of ' + totalPages + '</span>' +
-                      '</div>' +
-                      '<div class="rs-canvas-host" id="rsBaseCanvasHost">' +
-                        '<div style="color:var(--muted); font-size:12px;">Rendering page 1…</div>' +
-                      '</div>' +
-                      '<div class="rs-page-footer">' +
-                        '<span>ReadSpace 3D</span>' +
-                        '<span id="rsBaseFooterPct">' + Math.round((1 / totalPages) * 100) + '%</span>' +
-                      '</div>' +
-                      '<div class="rs-under-shadow" id="rsUnderShadow" style="display:none;"></div>' +
-                    '</div>' +
-                    '<div class="rs-curl-leaf" id="rsCurlLeaf" style="display:none;">' +
-                      '<div class="rs-leaf-front" id="rsLeafFront">' +
-                        '<div class="rs-page-header">' +
-                          '<span>' + escapeHtml(docName) + '</span>' +
-                          '<span id="rsLeafHeaderPage">Page 1 of ' + totalPages + '</span>' +
-                        '</div>' +
-                        '<div class="rs-canvas-host" id="rsLeafFrontCanvasHost"></div>' +
-                        '<div class="rs-page-footer">' +
-                          '<span>ReadSpace 3D</span>' +
-                          '<span id="rsLeafFooterPct">0%</span>' +
-                        '</div>' +
-                        '<div class="rs-curl-lighting"></div>' +
-                      '</div>' +
-                      '<div class="rs-leaf-back" id="rsLeafBack">' +
-                        '<div class="rs-canvas-host" id="rsLeafBackCanvasHost"></div>' +
-                        '<div class="rs-curl-lighting-back"></div>' +
-                      '</div>' +
-                    '</div>' +
-                    '<div class="rs-hotzone-left" id="rsHotzoneLeft" title="Previous Page"></div>' +
-                    '<div class="rs-hotzone-center" id="rsHotzoneCenter" title="Toggle Controls"></div>' +
-                    '<div class="rs-hotzone-right" id="rsHotzoneRight" title="Next Page"></div>' +
-                  '</div>' +
-                  '<div class="rs-book-edge-right" id="rsEdgeRight"></div>' +
-                '</div>' +
-              '</div>';
+            const PageFlipCtor = window.St?.PageFlip;
+            if (PageFlipCtor) {
+              root.innerHTML =
+                '<div class="rs-book-stage">' +
+                  '<div id="rsBook"></div>' +
+                '</div>';
 
-            const container = document.getElementById('rsBookContainer');
-            const pageCache = new Map();
-            let curPage = 1;
-            let isTurning = false;
+              const book = document.getElementById('rsBook');
+              const p1 = await pdf.getPage(1);
+              const vp1 = p1.getViewport({ scale: 1 });
+              const aspect = vp1.height / vp1.width;
 
-            function cloneCanvas(src) {
-              if (!src) return null;
-              const copy = document.createElement('canvas');
-              copy.width = src.width;
-              copy.height = src.height;
-              copy.style.width = '100%';
-              copy.style.height = '100%';
-              copy.style.objectFit = 'contain';
-              copy.style.display = 'block';
-              const ctx = copy.getContext('2d');
-              if (ctx) ctx.drawImage(src, 0, 0);
-              return copy;
-            }
-
-            function cloneCanvasVerso(src) {
-              if (!src) return null;
-              const copy = document.createElement('canvas');
-              copy.width = src.width;
-              copy.height = src.height;
-              copy.style.width = '100%';
-              copy.style.height = '100%';
-              copy.style.objectFit = 'contain';
-              copy.style.display = 'block';
-              copy.style.filter = 'blur(0.5px) contrast(0.85)';
-              copy.style.opacity = '0.24';
-              const ctx = copy.getContext('2d');
-              if (ctx) ctx.drawImage(src, 0, 0);
-              return copy;
-            }
-
-            async function getPageCanvas(pNum) {
-              if (pNum < 1 || pNum > totalPages) return null;
-              if (pageCache.has(pNum)) return pageCache.get(pNum);
-
-              try {
-                const page = await pdf.getPage(pNum);
-                const vp1 = page.getViewport({ scale: 1 });
-                const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
-                const containerW = Math.max(280, (container.clientWidth || window.innerWidth) - 20);
-                const scale = (containerW / vp1.width) * dpr;
-                const vp = page.getViewport({ scale: scale });
-
-                const canvas = document.createElement('canvas');
-                canvas.width = Math.round(vp.width);
-                canvas.height = Math.round(vp.height);
-                canvas.style.maxWidth = '100%';
-                canvas.style.maxHeight = '100%';
-                canvas.style.objectFit = 'contain';
-                canvas.style.display = 'block';
-
-                const ctx = canvas.getContext('2d', { alpha: false });
-                if (ctx) {
-                  ctx.imageSmoothingEnabled = true;
-                  ctx.imageSmoothingQuality = 'high';
-                }
-                await page.render({ canvasContext: ctx, viewport: vp }).promise;
-                pageCache.set(pNum, canvas);
-                return canvas;
-              } catch (err) {
-                console.warn('page render err', err);
-                return null;
-              }
-            }
-
-            async function renderCurrentPage() {
-              const canvas = await getPageCanvas(curPage);
-              const baseHost = document.getElementById('rsBaseCanvasHost');
-              const baseHeader = document.getElementById('rsBaseHeaderPage');
-              const baseFooter = document.getElementById('rsBaseFooterPct');
-              if (baseHost && canvas) {
-                baseHost.innerHTML = '';
-                baseHost.appendChild(cloneCanvas(canvas));
-              }
-              if (baseHeader) baseHeader.textContent = 'Page ' + curPage + ' of ' + totalPages;
-              if (baseFooter) baseFooter.textContent = Math.round((curPage / totalPages) * 100) + '%';
-              updateScrubber(curPage, totalPages);
-
-              // Pre-cache surrounding pages
-              if (curPage + 1 <= totalPages) getPageCanvas(curPage + 1);
-              if (curPage - 1 >= 1) getPageCanvas(curPage - 1);
-            }
-
-            async function turnForward() {
-              if (curPage >= totalPages || isTurning) return;
-              isTurning = true;
-              const from = curPage;
-              const to = curPage + 1;
-
-              const [fromCanvas, toCanvas] = await Promise.all([
-                getPageCanvas(from),
-                getPageCanvas(to)
-              ]);
-
-              if (!fromCanvas || !toCanvas) {
-                curPage = to;
-                renderCurrentPage();
-                isTurning = false;
-                return;
+              const maxW = Math.min(window.innerWidth - 24, 460);
+              const maxH = Math.min(window.innerHeight - 80, 720);
+              let targetW = maxW;
+              let targetH = Math.round(targetW * aspect);
+              if (targetH > maxH) {
+                targetH = maxH;
+                targetW = Math.round(targetH / aspect);
               }
 
-              // Base displays destination page
-              const baseHost = document.getElementById('rsBaseCanvasHost');
-              const baseHeader = document.getElementById('rsBaseHeaderPage');
-              const baseFooter = document.getElementById('rsBaseFooterPct');
-              const underShadow = document.getElementById('rsUnderShadow');
-              if (baseHost) {
-                baseHost.innerHTML = '';
-                baseHost.appendChild(cloneCanvas(toCanvas));
-              }
-              if (baseHeader) baseHeader.textContent = 'Page ' + to + ' of ' + totalPages;
-              if (baseFooter) baseFooter.textContent = Math.round((to / totalPages) * 100) + '%';
-              if (underShadow) underShadow.style.display = 'block';
+              for (let i = 1; i <= totalPages; i++) {
+                const wrap = document.createElement('div');
+                wrap.className = 'page-canvas-wrap';
+                wrap.dataset.density = 'soft';
 
-              // Leaf displays current page curling over
-              const leaf = document.getElementById('rsCurlLeaf');
-              const leafFrontHost = document.getElementById('rsLeafFrontCanvasHost');
-              const leafBackHost = document.getElementById('rsLeafBackCanvasHost');
-              const leafHeader = document.getElementById('rsLeafHeaderPage');
-              const leafFooter = document.getElementById('rsLeafFooterPct');
+                const header = document.createElement('div');
+                header.className = 'md-page-header';
+                header.style.position = 'absolute';
+                header.style.top = '6px';
+                header.style.left = '14px';
+                header.style.right = '14px';
+                header.style.zIndex = '5';
+                header.innerHTML = '<span>' + escapeHtml(docName) + '</span><span>Page ' + i + ' of ' + totalPages + '</span>';
 
-              if (leafFrontHost) {
-                leafFrontHost.innerHTML = '';
-                leafFrontHost.appendChild(cloneCanvas(fromCanvas));
-              }
-              if (leafBackHost) {
-                leafBackHost.innerHTML = '';
-                leafBackHost.appendChild(cloneCanvasVerso(fromCanvas));
-              }
-              if (leafHeader) leafHeader.textContent = 'Page ' + from + ' of ' + totalPages;
-              if (leafFooter) leafFooter.textContent = Math.round((from / totalPages) * 100) + '%';
+                const canvasHost = document.createElement('div');
+                canvasHost.className = 'rs-canvas-host';
+                canvasHost.id = 'rsPdfCanvasHost_' + i;
+                canvasHost.innerHTML = '<div style="color:var(--muted); font-size:12px;">Rendering…</div>';
 
-              playPaperTurnSound();
+                const footer = document.createElement('div');
+                footer.className = 'md-page-footer';
+                footer.style.position = 'absolute';
+                footer.style.bottom = '6px';
+                footer.style.left = '14px';
+                footer.style.right = '14px';
+                footer.style.zIndex = '5';
+                footer.innerHTML = '<span>ReadSpace 3D</span><span>' + Math.round((i / totalPages) * 100) + '%</span>';
 
-              if (leaf) {
-                leaf.style.display = 'block';
-                leaf.className = 'rs-curl-leaf rs-curl-forward';
+                wrap.appendChild(header);
+                wrap.appendChild(canvasHost);
+                wrap.appendChild(footer);
+                book.appendChild(wrap);
               }
 
-              setTimeout(() => {
-                curPage = to;
-                if (leaf) {
-                  leaf.style.display = 'none';
-                  leaf.className = 'rs-curl-leaf';
-                }
-                if (underShadow) underShadow.style.display = 'none';
-                isTurning = false;
-                updateScrubber(curPage, totalPages);
-                if (curPage + 1 <= totalPages) getPageCanvas(curPage + 1);
-              }, 520);
-            }
+              const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+              const renderScale = (targetW / vp1.width) * dpr;
 
-            async function turnBackward() {
-              if (curPage <= 1 || isTurning) return;
-              isTurning = true;
-              const from = curPage;
-              const to = curPage - 1;
-
-              const [fromCanvas, toCanvas] = await Promise.all([
-                getPageCanvas(from),
-                getPageCanvas(to)
-              ]);
-
-              if (!fromCanvas || !toCanvas) {
-                curPage = to;
-                renderCurrentPage();
-                isTurning = false;
-                return;
-              }
-
-              const baseHost = document.getElementById('rsBaseCanvasHost');
-              const baseHeader = document.getElementById('rsBaseHeaderPage');
-              const baseFooter = document.getElementById('rsBaseFooterPct');
-              const underShadow = document.getElementById('rsUnderShadow');
-              if (baseHost) {
-                baseHost.innerHTML = '';
-                baseHost.appendChild(cloneCanvas(fromCanvas));
-              }
-              if (baseHeader) baseHeader.textContent = 'Page ' + from + ' of ' + totalPages;
-              if (baseFooter) baseFooter.textContent = Math.round((from / totalPages) * 100) + '%';
-              if (underShadow) underShadow.style.display = 'block';
-
-              const leaf = document.getElementById('rsCurlLeaf');
-              const leafFrontHost = document.getElementById('rsLeafFrontCanvasHost');
-              const leafBackHost = document.getElementById('rsLeafBackCanvasHost');
-              const leafHeader = document.getElementById('rsLeafHeaderPage');
-              const leafFooter = document.getElementById('rsLeafFooterPct');
-
-              if (leafFrontHost) {
-                leafFrontHost.innerHTML = '';
-                leafFrontHost.appendChild(cloneCanvas(toCanvas));
-              }
-              if (leafBackHost) {
-                leafBackHost.innerHTML = '';
-                leafBackHost.appendChild(cloneCanvasVerso(toCanvas));
-              }
-              if (leafHeader) leafHeader.textContent = 'Page ' + to + ' of ' + totalPages;
-              if (leafFooter) leafFooter.textContent = Math.round((to / totalPages) * 100) + '%';
-
-              playPaperTurnSound();
-
-              if (leaf) {
-                leaf.style.display = 'block';
-                leaf.className = 'rs-curl-leaf rs-curl-backward';
-              }
-
-              setTimeout(() => {
-                curPage = to;
-                if (baseHost) {
-                  baseHost.innerHTML = '';
-                  baseHost.appendChild(cloneCanvas(toCanvas));
-                }
-                if (baseHeader) baseHeader.textContent = 'Page ' + to + ' of ' + totalPages;
-                if (baseFooter) baseFooter.textContent = Math.round((to / totalPages) * 100) + '%';
-                if (leaf) {
-                  leaf.style.display = 'none';
-                  leaf.className = 'rs-curl-leaf';
-                }
-                if (underShadow) underShadow.style.display = 'none';
-                isTurning = false;
-                updateScrubber(curPage, totalPages);
-                if (curPage - 1 >= 1) getPageCanvas(curPage - 1);
-              }, 520);
-            }
-
-            window.rsNextPage = () => {
-              turnForward();
-              showScrubberBriefly();
-            };
-            window.rsPrevPage = () => {
-              turnBackward();
-              showScrubberBriefly();
-            };
-            window.rsGoToPage = (p) => {
-              p = Math.max(1, Math.min(totalPages, p));
-              if (p === curPage) return;
-              if (p === curPage + 1) {
-                turnForward();
-              } else if (p === curPage - 1) {
-                turnBackward();
-              } else {
-                curPage = p;
-                renderCurrentPage();
-              }
-            };
-
-            const hotL = document.getElementById('rsHotzoneLeft');
-            const hotC = document.getElementById('rsHotzoneCenter');
-            const hotR = document.getElementById('rsHotzoneRight');
-
-            if (hotL) hotL.onclick = (e) => { e.stopPropagation(); turnBackward(); showScrubberBriefly(); };
-            if (hotC) hotC.onclick = (e) => { e.stopPropagation(); toggleScrubber(); };
-            if (hotR) hotR.onclick = (e) => { e.stopPropagation(); turnForward(); showScrubberBriefly(); };
-
-            // Touch Swipe & Drag Curl Gesture
-            let touchStartX = 0;
-            let touchStartY = 0;
-            container.addEventListener('touchstart', (e) => {
-              if (e.touches.length === 1 && !isTurning) {
-                touchStartX = e.touches[0].clientX;
-                touchStartY = e.touches[0].clientY;
-              }
-            }, { passive: true });
-
-            container.addEventListener('touchend', (e) => {
-              if (e.changedTouches.length === 1 && !isTurning) {
-                const dx = e.changedTouches[0].clientX - touchStartX;
-                const dy = e.changedTouches[0].clientY - touchStartY;
-                if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy)) {
-                  if (dx < 0) turnForward();
-                  else turnBackward();
-                  showScrubberBriefly();
+              async function renderPageCanvas(pNum) {
+                if (pNum < 1 || pNum > totalPages) return;
+                const host = document.getElementById('rsPdfCanvasHost_' + pNum);
+                if (!host || host.dataset.rendered === 'true') return;
+                host.dataset.rendered = 'true';
+                try {
+                  const page = await pdf.getPage(pNum);
+                  const vp = page.getViewport({ scale: renderScale });
+                  const canvas = document.createElement('canvas');
+                  canvas.width = Math.round(vp.width);
+                  canvas.height = Math.round(vp.height);
+                  canvas.style.width = '100%';
+                  canvas.style.height = '100%';
+                  canvas.style.objectFit = 'contain';
+                  canvas.style.display = 'block';
+                  const ctx = canvas.getContext('2d', { alpha: false });
+                  if (ctx) {
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                  }
+                  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+                  host.innerHTML = '';
+                  host.appendChild(canvas);
+                } catch (err) {
+                  console.warn('pdf render err', err);
                 }
               }
-            }, { passive: true });
 
-            renderCurrentPage();
+              await renderPageCanvas(1);
+              if (totalPages > 1) void renderPageCanvas(2);
+
+              const pageFlip = new PageFlipCtor(book, {
+                width: targetW,
+                height: targetH,
+                size: 'fixed',
+                showCover: false,
+                usePortrait: true,
+                flippingTime: 650,
+                drawShadow: true,
+                maxShadowOpacity: 0.7,
+                showPageCorners: true,
+                useMouseEvents: true,
+                swipeDistance: 25,
+                mobileScrollSupport: false
+              });
+
+              pageFlip.loadFromHTML(book.querySelectorAll('.page-canvas-wrap'));
+              window.__pageFlip = pageFlip;
+
+              pageFlip.on('flip', (e) => {
+                const p = e.data + 1;
+                playPaperTurnSound();
+                updateScrubber(p, totalPages);
+                showScrubberBriefly();
+                renderPageCanvas(p);
+                if (p + 1 <= totalPages) renderPageCanvas(p + 1);
+                if (p - 1 >= 1) renderPageCanvas(p - 1);
+              });
+
+              pageFlip.on('changeState', (e) => {
+                if (e.data === 'folding' || e.data === 'flipping') {
+                  const curIdx = pageFlip.getCurrentPageIndex();
+                  renderPageCanvas(curIdx + 1);
+                  renderPageCanvas(curIdx + 2);
+                }
+              });
+
+              window.rsNextPage = () => {
+                pageFlip.flipNext();
+                showScrubberBriefly();
+              };
+              window.rsPrevPage = () => {
+                pageFlip.flipPrev();
+                showScrubberBriefly();
+              };
+              window.rsGoToPage = (p) => {
+                renderPageCanvas(p);
+                pageFlip.turnToPage(p - 1);
+                showScrubberBriefly();
+              };
+
+              updateScrubber(1, totalPages);
+            }
           } else {
             // Continuous Vertical Scroll Mode (Original Proven PDF Engine)
             root.innerHTML = '<div class="pdf-container" id="pdfRoot"></div>';
