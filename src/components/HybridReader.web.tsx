@@ -1169,27 +1169,43 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
             '</div>';
 
           const book = document.getElementById('rsHtmlBook');
-          const temp = document.createElement('div');
-          temp.innerHTML = contentHtml;
 
-          const nodes = Array.from(temp.children);
+          // Robust pixel-accurate height measurement to guarantee text never gets cut off!
+          const targetW = window.innerWidth;
+          const targetH = window.innerHeight;
+          const contentWidth = Math.max(280, targetW - 44);
+          const availHeight = Math.max(300, targetH - 68);
+
+          const measureBox = document.createElement('div');
+          measureBox.style.position = 'absolute';
+          measureBox.style.visibility = 'hidden';
+          measureBox.style.left = '-9999px';
+          measureBox.style.width = contentWidth + 'px';
+          measureBox.style.fontSize = (window.__readerState.fontSize || 16) + 'px';
+          measureBox.style.lineHeight = (window.__readerState.lineHeight || 1.6);
+          measureBox.className = 'md-page-content';
+          measureBox.innerHTML = contentHtml;
+          document.body.appendChild(measureBox);
+
+          const elements = Array.from(measureBox.children);
           const pages = [];
           let curElements = [];
-          const MAX_CHARS_PER_PAGE = 850;
-          let charCount = 0;
+          let currentH = 0;
 
-          for (const node of nodes) {
-            const textLen = (node.textContent || '').length;
-            if (charCount + textLen > MAX_CHARS_PER_PAGE && curElements.length > 0) {
+          for (let el of elements) {
+            const elH = Math.max(20, el.offsetHeight + 14);
+            if (currentH + elH > availHeight && curElements.length > 0) {
               pages.push(curElements);
-              curElements = [node];
-              charCount = textLen;
+              curElements = [el.cloneNode(true)];
+              currentH = elH;
             } else {
-              curElements.push(node);
-              charCount += textLen;
+              curElements.push(el.cloneNode(true));
+              currentH += elH;
             }
           }
           if (curElements.length > 0) pages.push(curElements);
+          if (measureBox.parentNode) measureBox.parentNode.removeChild(measureBox);
+
           const totalP = Math.max(1, pages.length);
 
           pages.forEach((pageNodes, idx) => {
@@ -1209,9 +1225,6 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
             leaf.appendChild(footer);
             book.appendChild(leaf);
           });
-
-          const targetW = window.innerWidth;
-          const targetH = window.innerHeight;
 
           const pageFlip = new PageFlipCtor(book, {
             width: targetW,
@@ -1416,11 +1429,22 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
               let panX = 0;
               let panY = 0;
 
-              function updateZoomTransform() {
+              function updateZoomTransform(smooth) {
                 const zCont = document.getElementById('rsZoomContainer');
                 const pill = document.getElementById('rsZoomPill');
+                if (smooth) {
+                  zCont.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
+                } else {
+                  zCont.style.transition = 'none';
+                }
+
                 if (currentZoom > 1.05) {
-                  zCont.style.transform = 'scale(' + currentZoom + ') translate(' + (panX / currentZoom) + 'px, ' + (panY / currentZoom) + 'px)';
+                  const maxPanX = (window.innerWidth * (currentZoom - 1)) / 2;
+                  const maxPanY = (window.innerHeight * (currentZoom - 1)) / 2;
+                  panX = Math.max(-maxPanX, Math.min(maxPanX, panX));
+                  panY = Math.max(-maxPanY, Math.min(maxPanY, panY));
+
+                  zCont.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + currentZoom + ')';
                   if (pill) {
                     pill.style.display = 'block';
                     pill.textContent = 'Zoom ' + Math.round(currentZoom * 100) + '% ✕';
@@ -1438,7 +1462,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
                 currentZoom = 1;
                 panX = 0;
                 panY = 0;
-                updateZoomTransform();
+                updateZoomTransform(true);
               }
               window.resetZoom = resetZoom;
 
@@ -1454,7 +1478,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
                         resetZoom();
                       } else {
                         currentZoom = 2.2;
-                        updateZoomTransform();
+                        updateZoomTransform(true);
                       }
                     }
                     lastTapTime = now;
@@ -1487,11 +1511,11 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
                       e.touches[0].clientY - e.touches[1].clientY
                     );
                     currentZoom = Math.min(3.5, Math.max(1, initialZoom * (dist / initialDist)));
-                    updateZoomTransform();
+                    updateZoomTransform(false);
                   } else if (e.touches && e.touches.length === 1 && isPanning && currentZoom > 1.05) {
                     panX = e.touches[0].clientX - panStart.x;
                     panY = e.touches[0].clientY - panStart.y;
-                    updateZoomTransform();
+                    updateZoomTransform(false);
                   }
                 }, { passive: true });
 
