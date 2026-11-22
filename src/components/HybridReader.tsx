@@ -396,37 +396,29 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       transition: background-color 0.3s ease;
     }
 
-    /* 3D Book Stage (Play Books inspired page-curl cylinder) */
+    #root {
+      width: 100%;
+      height: 100%;
+      min-height: 100vh;
+      position: relative;
+    }
+
+    /* 3D Book Stage (Google Play Books inspired page-curl cylinder) */
     .rs-book-stage {
       position: fixed;
       inset: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      perspective: 2000px;
-      perspective-origin: 50% 50%;
-      overflow: hidden;
-      background: var(--pdf-bg);
-      user-select: none;
-      -webkit-user-select: none;
-      padding: 10px 10px 65px;
-      box-sizing: border-box;
-    }
-    /* 3D Book Stage (Google Play Books inspired page-curl cylinder) */
-    .rs-book-stage {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
       perspective: 2400px;
       -webkit-perspective: 2400px;
+      overflow: hidden;
+      background: var(--bg);
       user-select: none;
       -webkit-user-select: none;
-      padding: 10px 10px 65px;
+      padding: 10px 10px 75px;
       box-sizing: border-box;
-      position: relative;
+      z-index: 20;
     }
     .rs-book-wrapper {
       position: relative;
@@ -502,6 +494,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       flex-direction: column;
       overflow: hidden;
       border-radius: 0 6px 6px 0;
+      transform: translateZ(0);
       z-index: 10;
     }
     body[data-theme="dark"] .rs-page-base {
@@ -529,46 +522,46 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
 
     @keyframes curlFlipForward {
       0% {
-        transform: perspective(2200px) rotateY(0deg) rotateZ(0deg) translateZ(0) scaleX(1);
+        transform: perspective(2200px) translateZ(0) rotateY(0deg) scaleX(1);
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
       }
       20% {
-        transform: perspective(2200px) rotateY(-28deg) rotateZ(-1.2deg) translateZ(40px) scaleX(0.97) skewY(-1.8deg);
-        box-shadow: -10px 12px 24px rgba(0, 0, 0, 0.28);
+        transform: perspective(2200px) translateZ(80px) rotateY(-28deg) rotateZ(-1.2deg) scaleX(0.96) skewY(-1.8deg);
+        box-shadow: -12px 14px 28px rgba(0, 0, 0, 0.35);
       }
       52% {
-        transform: perspective(2200px) rotateY(-84deg) rotateZ(-2.6deg) translateZ(66px) scaleX(0.88) skewY(-3deg);
-        box-shadow: -24px 18px 40px rgba(0, 0, 0, 0.38);
+        transform: perspective(2200px) translateZ(140px) rotateY(-84deg) rotateZ(-2.6deg) scaleX(0.88) skewY(-3deg);
+        box-shadow: -26px 20px 48px rgba(0, 0, 0, 0.45);
       }
       80% {
-        transform: perspective(2200px) rotateY(-144deg) rotateZ(-1deg) translateZ(36px) scaleX(0.95) skewY(-1.2deg);
-        box-shadow: -12px 10px 22px rgba(0, 0, 0, 0.22);
+        transform: perspective(2200px) translateZ(70px) rotateY(-144deg) rotateZ(-1deg) scaleX(0.95) skewY(-1.2deg);
+        box-shadow: -14px 12px 26px rgba(0, 0, 0, 0.28);
       }
       100% {
-        transform: perspective(2200px) rotateY(-180deg) rotateZ(0deg) translateZ(0) scaleX(1) skewY(0deg);
+        transform: perspective(2200px) translateZ(0) rotateY(-180deg) rotateZ(0deg) scaleX(1) skewY(0deg);
         box-shadow: 0 0 0 rgba(0, 0, 0, 0);
       }
     }
 
     @keyframes curlFlipBackward {
       0% {
-        transform: perspective(2200px) rotateY(-180deg) rotateZ(0deg) translateZ(0) scaleX(1) skewY(0deg);
+        transform: perspective(2200px) translateZ(0) rotateY(-180deg) rotateZ(0deg) scaleX(1) skewY(0deg);
         box-shadow: 0 0 0 rgba(0, 0, 0, 0);
       }
       20% {
-        transform: perspective(2200px) rotateY(-144deg) rotateZ(-1deg) translateZ(36px) scaleX(0.95) skewY(-1.2deg);
-        box-shadow: -12px 10px 22px rgba(0, 0, 0, 0.22);
+        transform: perspective(2200px) translateZ(70px) rotateY(-144deg) rotateZ(-1deg) scaleX(0.95) skewY(-1.2deg);
+        box-shadow: -14px 12px 26px rgba(0, 0, 0, 0.28);
       }
       52% {
-        transform: perspective(2200px) rotateY(-84deg) rotateZ(-2.6deg) translateZ(66px) scaleX(0.88) skewY(-3deg);
-        box-shadow: -24px 18px 40px rgba(0, 0, 0, 0.38);
+        transform: perspective(2200px) translateZ(140px) rotateY(-84deg) rotateZ(-2.6deg) scaleX(0.88) skewY(-3deg);
+        box-shadow: -26px 20px 48px rgba(0, 0, 0, 0.45);
       }
       80% {
-        transform: perspective(2200px) rotateY(-28deg) rotateZ(-1.2deg) translateZ(40px) scaleX(0.97) skewY(-1.8deg);
-        box-shadow: -10px 12px 24px rgba(0, 0, 0, 0.28);
+        transform: perspective(2200px) translateZ(80px) rotateY(-28deg) rotateZ(-1.2deg) scaleX(0.96) skewY(-1.8deg);
+        box-shadow: -12px 14px 28px rgba(0, 0, 0, 0.35);
       }
       100% {
-        transform: perspective(2200px) rotateY(0deg) rotateZ(0deg) translateZ(0) scaleX(1);
+        transform: perspective(2200px) translateZ(0) rotateY(0deg) rotateZ(0deg) scaleX(1);
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
       }
     }
@@ -731,12 +724,6 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       width: 100%;
       padding: 24px 28px;
       overflow-y: auto;
-      box-sizing: border-box;
-      font-size: inherit;
-      line-height: inherit;
-      color: inherit;
-      word-break: break-word;
-    }
       box-sizing: border-box;
       font-size: inherit;
       line-height: inherit;
@@ -1273,6 +1260,9 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
         hideScrubber();
       }
     }
+    window.showScrubber = showScrubberBriefly;
+    window.hideScrubber = hideScrubber;
+    window.toggleScrubber = toggleScrubber;
 
     function updateScrubber(current, total) {
       window.__readerState.page = current;
