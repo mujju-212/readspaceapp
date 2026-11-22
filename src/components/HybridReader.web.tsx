@@ -1384,7 +1384,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
           const zip = await JSZip.loadAsync(base64ToUint8Array(docBase64));
           const slideFiles = [];
           zip.forEach((path) => {
-            const m = path.match(/^ppt\/slides\/slide(\d+)\.xml$/i);
+            const m = path.match(/^ppt\\/slides\\/slide(\\d+)\\.xml$/i);
             if (m) slideFiles.push({ path, num: parseInt(m[1], 10) });
           });
           slideFiles.sort((a, b) => a.num - b.num);
@@ -1544,8 +1544,8 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
             '<div class="html-toolbar">' +
               '<span style="font-size:12px; font-weight:600; color:var(--muted);">🌐 HTML Document</span>' +
               '<div class="html-toggle-group">' +
-                '<button type="button" id="btnHtmlPreview" class="html-toggle-btn active" onclick="switchHtmlView(\'preview\')">Preview</button>' +
-                '<button type="button" id="btnHtmlCode" class="html-toggle-btn" onclick="switchHtmlView(\'code\')">Code</button>' +
+                '<button type="button" id="btnHtmlPreview" class="html-toggle-btn active" onclick="switchHtmlView(&quot;preview&quot;)">Preview</button>' +
+                '<button type="button" id="btnHtmlCode" class="html-toggle-btn" onclick="switchHtmlView(&quot;code&quot;)">Code</button>' +
               '</div>' +
             '</div>' +
             '<div id="htmlPreviewPane">' + cleanHtml + '</div>' +
