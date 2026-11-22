@@ -26,6 +26,8 @@ import {
   OFFLINE_MAMMOTH_B64,
   OFFLINE_PDFJS_B64,
   OFFLINE_PAGEFLIP_B64,
+  OFFLINE_KATEX_B64,
+  OFFLINE_KATEX_CSS,
 } from '../vendor/offlineVendors';
 
 let NativeWebView: any = null;
@@ -273,20 +275,22 @@ function getRequiredVendorBundles(kind?: string): string[] {
     case 'pdf':
       return [OFFLINE_PDFJS_B64, OFFLINE_PAGEFLIP_B64];
     case 'markdown':
-      return [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
+      return [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64];
     case 'docx':
-      return [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
+      return [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64];
     case 'pptx':
       return [OFFLINE_JSZIP_B64, OFFLINE_PAGEFLIP_B64];
     case 'html':
-      return [OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
+      return [OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64];
     default:
-      return [OFFLINE_PAGEFLIP_B64];
+      return [OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64];
   }
 }
 
 function getFallbackCdns(kind?: string) {
   const pageFlipCdn = '<script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>';
+  const katexCssCdn = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">';
+  const katexJsCdn = '<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>';
   switch (kind) {
     case 'pdf':
       return [
@@ -295,12 +299,16 @@ function getFallbackCdns(kind?: string) {
       ];
     case 'markdown':
       return [
+        katexCssCdn,
+        katexJsCdn,
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>',
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
         pageFlipCdn,
       ];
     case 'docx':
       return [
+        katexCssCdn,
+        katexJsCdn,
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>',
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>',
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
@@ -313,11 +321,13 @@ function getFallbackCdns(kind?: string) {
       ];
     case 'html':
       return [
+        katexCssCdn,
+        katexJsCdn,
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
         pageFlipCdn,
       ];
     default:
-      return [pageFlipCdn];
+      return [katexCssCdn, katexJsCdn, pageFlipCdn];
   }
 }
 
@@ -349,6 +359,12 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       }
     }
     ${bundlesToRun.map((b) => `loadBundle(${JSON.stringify(b)});`).join('\n    ')}
+    try {
+      var katexCss = atob(${JSON.stringify(OFFLINE_KATEX_CSS)});
+      var sStyle = document.createElement('style');
+      sStyle.textContent = katexCss;
+      document.head.appendChild(sStyle);
+    } catch(e) {}
   })();
   </script>`
     : '';
@@ -416,26 +432,32 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       position: relative;
     }
 
-    /* 3D Book Stage (Google Play Books inspired page-curl cylinder) */
+    /* 3D Book Stage (Google Play Books immersive fullscreen layout) */
     .rs-book-stage {
       position: fixed;
       inset: 0;
+      width: 100%;
+      height: 100%;
       display: flex;
       align-items: center;
       justify-content: center;
-      perspective: 2400px;
-      -webkit-perspective: 2400px;
-      overflow: hidden;
       background: var(--bg);
+      overflow: hidden;
       user-select: none;
       -webkit-user-select: none;
-      padding: 10px 10px 75px;
-      box-sizing: border-box;
       z-index: 20;
     }
+    #rsZoomContainer {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform-origin: center center;
+      transition: transform 0.15s ease-out;
+    }
     #rsBook, #rsHtmlBook {
-      box-shadow: 0 16px 50px rgba(0, 0, 0, 0.32), 0 2px 10px rgba(0, 0, 0, 0.12);
-      border-radius: 4px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
     }
     .page-canvas-wrap {
       width: 100%;
@@ -457,13 +479,17 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       height: 100%;
       background: var(--card);
       color: var(--fg);
-      padding: 24px 20px;
+      padding: 24px 22px 32px;
       box-sizing: border-box;
       overflow: hidden;
-      border: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       justify-content: space-between;
+      will-change: transform;
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
     }
     .md-page-content {
       flex: 1;
@@ -473,345 +499,50 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       color: inherit;
       word-break: break-word;
     }
-    .md-page-header, .md-page-footer {
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--muted);
-      display: flex;
-      justify-content: space-between;
-      user-select: none;
-    }
-    .md-page-header {
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 6px;
-      margin-bottom: 10px;
-    }
-    .md-page-footer {
-      border-top: 1px solid var(--border);
-      padding-top: 6px;
-      margin-top: 10px;
-    }
+    .md-page-content h1 { font-size: 1.45em; margin-top: 0; margin-bottom: 12px; }
+    .md-page-content h2 { font-size: 1.25em; margin-top: 14px; margin-bottom: 8px; }
+    .md-page-content h3 { font-size: 1.1em; margin-top: 12px; margin-bottom: 6px; }
+    .md-page-content p { margin: 8px 0; }
     .md-page-content table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 12px;
-      margin: 8px 0;
+      font-size: 0.9em;
+      margin: 10px 0;
     }
     .md-page-content th, .md-page-content td {
       border: 1px solid var(--border);
-      padding: 4px 6px;
+      padding: 6px 8px;
       text-align: left;
     }
     .md-page-content th { background: var(--panel); }
-    .rs-book-wrapper {
-      position: relative;
-      width: 100%;
-      max-width: 820px;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .rs-book-container {
-      position: relative;
-      width: 100%;
-      height: 100%;
-      background: var(--panel);
-      border-radius: 8px;
-      box-shadow: 0 16px 50px rgba(0, 0, 0, 0.28), 0 2px 10px rgba(0, 0, 0, 0.12);
-      transform-style: preserve-3d;
-      -webkit-transform-style: preserve-3d;
-      overflow: hidden;
-      border: 1px solid var(--border);
-    }
-    .rs-book-spine {
-      position: absolute;
-      top: 0; bottom: 0; left: 0;
-      width: 38px;
-      pointer-events: none;
-      background: linear-gradient(
-        to right,
-        rgba(0, 0, 0, 0.26) 0%,
-        rgba(0, 0, 0, 0.10) 30%,
-        rgba(0, 0, 0, 0.03) 60%,
-        transparent 100%
-      );
-      border-left: 3px solid rgba(0, 0, 0, 0.32);
-      z-index: 45;
-    }
-    body[data-theme="dark"] .rs-book-spine {
-      background: linear-gradient(
-        to right,
-        rgba(0, 0, 0, 0.6) 0%,
-        rgba(0, 0, 0, 0.25) 30%,
-        rgba(255, 180, 50, 0.05) 60%,
-        transparent 100%
-      );
-      border-left: 3px solid rgba(0, 0, 0, 0.7);
-    }
-    .rs-book-edge-left, .rs-book-edge-right {
-      position: absolute;
-      top: 14px; bottom: 14px;
-      width: 6px;
-      pointer-events: none;
-      border-radius: 2px;
-      background: repeating-linear-gradient(
-        to right,
-        rgba(0, 0, 0, 0.12) 0px,
-        rgba(0, 0, 0, 0.02) 1px,
-        rgba(255, 255, 255, 0.1) 2px
-      );
-      z-index: 5;
-    }
-    .rs-book-edge-left { left: 4px; box-shadow: -2px 0 6px rgba(0,0,0,0.18); }
-    .rs-book-edge-right { right: 4px; box-shadow: 2px 0 6px rgba(0,0,0,0.18); }
-
-    /* Base Resting Page Layer */
-    .rs-page-base {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      background: #ffffff;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      border-radius: 0 6px 6px 0;
-      transform: translateZ(0);
-      z-index: 10;
-    }
-    body[data-theme="dark"] .rs-page-base {
-      background: #141b2d;
-      color: #e2e8f0;
-    }
-    body[data-theme="sepia"] .rs-page-base {
-      background: #fbf0d9;
-      color: #43382a;
-    }
-
-    /* Active 3D Curling Leaf Layer */
-    .rs-curl-leaf {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      transform-origin: left center;
-      transform-style: preserve-3d;
-      -webkit-transform-style: preserve-3d;
-      border-radius: 0 6px 6px 0;
-      z-index: 30;
-      pointer-events: none;
-    }
-
-    @keyframes curlFlipForward {
-      0% {
-        transform: perspective(2200px) translateZ(0) rotateY(0deg) scaleX(1);
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
-      }
-      20% {
-        transform: perspective(2200px) translateZ(80px) rotateY(-28deg) rotateZ(-1.2deg) scaleX(0.96) skewY(-1.8deg);
-        box-shadow: -12px 14px 28px rgba(0, 0, 0, 0.35);
-      }
-      52% {
-        transform: perspective(2200px) translateZ(140px) rotateY(-84deg) rotateZ(-2.6deg) scaleX(0.88) skewY(-3deg);
-        box-shadow: -26px 20px 48px rgba(0, 0, 0, 0.45);
-      }
-      80% {
-        transform: perspective(2200px) translateZ(70px) rotateY(-144deg) rotateZ(-1deg) scaleX(0.95) skewY(-1.2deg);
-        box-shadow: -14px 12px 26px rgba(0, 0, 0, 0.28);
-      }
-      100% {
-        transform: perspective(2200px) translateZ(0) rotateY(-180deg) rotateZ(0deg) scaleX(1) skewY(0deg);
-        box-shadow: 0 0 0 rgba(0, 0, 0, 0);
-      }
-    }
-
-    @keyframes curlFlipBackward {
-      0% {
-        transform: perspective(2200px) translateZ(0) rotateY(-180deg) rotateZ(0deg) scaleX(1) skewY(0deg);
-        box-shadow: 0 0 0 rgba(0, 0, 0, 0);
-      }
-      20% {
-        transform: perspective(2200px) translateZ(70px) rotateY(-144deg) rotateZ(-1deg) scaleX(0.95) skewY(-1.2deg);
-        box-shadow: -14px 12px 26px rgba(0, 0, 0, 0.28);
-      }
-      52% {
-        transform: perspective(2200px) translateZ(140px) rotateY(-84deg) rotateZ(-2.6deg) scaleX(0.88) skewY(-3deg);
-        box-shadow: -26px 20px 48px rgba(0, 0, 0, 0.45);
-      }
-      80% {
-        transform: perspective(2200px) translateZ(80px) rotateY(-28deg) rotateZ(-1.2deg) scaleX(0.96) skewY(-1.8deg);
-        box-shadow: -12px 14px 28px rgba(0, 0, 0, 0.35);
-      }
-      100% {
-        transform: perspective(2200px) translateZ(0) rotateY(0deg) rotateZ(0deg) scaleX(1);
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
-      }
-    }
-
-    .rs-curl-leaf.rs-curl-forward {
-      animation: curlFlipForward 0.52s cubic-bezier(0.25, 0.95, 0.35, 1) forwards;
-    }
-    .rs-curl-leaf.rs-curl-backward {
-      animation: curlFlipBackward 0.52s cubic-bezier(0.25, 0.95, 0.35, 1) forwards;
-    }
-
-    .rs-leaf-front,
-    .rs-leaf-back {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      border-radius: 0 6px 6px 0;
-      backface-visibility: hidden;
-      -webkit-backface-visibility: hidden;
-      display: flex;
-      flex-direction: column;
-    }
-    .rs-leaf-front {
-      background: #ffffff;
-      z-index: 2;
-    }
-    body[data-theme="dark"] .rs-leaf-front { background: #141b2d; }
-    body[data-theme="sepia"] .rs-leaf-front { background: #fbf0d9; }
-
-    .rs-leaf-back {
-      background: #fbf9f4;
-      transform: rotateY(180deg);
-      border-radius: 6px 0 0 6px;
-      z-index: 1;
-    }
-    body[data-theme="dark"] .rs-leaf-back { background: #192138; }
-    body[data-theme="sepia"] .rs-leaf-back { background: #f4e8cc; }
-
-    .rs-canvas-host {
-      flex: 1;
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      padding: 4px;
-      box-sizing: border-box;
-      position: relative;
-    }
-    .rs-canvas-host canvas {
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-      display: block;
-    }
-
-    .rs-under-shadow {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background: linear-gradient(
-        to right,
-        rgba(0, 0, 0, 0.35) 0%,
-        rgba(0, 0, 0, 0.12) 30%,
-        transparent 70%
-      );
-      z-index: 18;
-      animation: underShadowSweep 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    }
-    @keyframes underShadowSweep {
-      0% { opacity: 0.85; transform: translateX(0); }
-      50% { opacity: 0.4; transform: translateX(-25%); }
-      100% { opacity: 0; transform: translateX(-50%); }
-    }
-
-    @keyframes curlSpecular {
-      0% { opacity: 0.15; background-position: 100% 0; }
-      45% { opacity: 0.7; background-position: 50% 0; }
-      100% { opacity: 0; background-position: 0% 0; }
-    }
-    .rs-curl-lighting {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background: linear-gradient(
-        to right,
-        rgba(0, 0, 0, 0.32) 0%,
-        rgba(0, 0, 0, 0.05) 15%,
-        rgba(255, 255, 255, 0.5) 45%,
-        rgba(0, 0, 0, 0.18) 75%,
-        rgba(0, 0, 0, 0.38) 100%
-      );
-      background-size: 200% 100%;
-      mix-blend-mode: multiply;
-      z-index: 10;
-      animation: curlSpecular 0.52s ease-in-out forwards;
-    }
-    .rs-curl-lighting-back {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background: linear-gradient(
-        to left,
-        rgba(0, 0, 0, 0.38) 0%,
-        rgba(0, 0, 0, 0.08) 20%,
-        rgba(255, 255, 255, 0.4) 50%,
-        rgba(0, 0, 0, 0.28) 100%
-      );
-      background-size: 200% 100%;
-      mix-blend-mode: multiply;
-      z-index: 10;
-      animation: curlSpecular 0.52s ease-in-out forwards;
-    }
-
-    .rs-page-header, .rs-page-footer {
-      padding: 8px 18px;
-      font-size: 11.5px;
+    .md-page-footer {
+      font-size: 11px;
       font-weight: 600;
       color: var(--muted);
-      display: flex;
-      justify-content: space-between;
-      user-select: none;
-      border-bottom: 1px solid var(--border);
-      background: rgba(0,0,0,0.02);
-      flex-shrink: 0;
-    }
-    .rs-page-footer {
-      border-bottom: none;
+      text-align: right;
+      padding-top: 6px;
       border-top: 1px solid var(--border);
+      user-select: none;
     }
+    .katex-display { margin: 12px 0; overflow-x: auto; overflow-y: hidden; }
+    .katex { font-size: 1.08em; }
 
-    /* Hotzones: Left 20% (Prev), Center 60% (Toggle Menu/Scrubber), Right 20% (Next) */
-    .rs-hotzone-left {
-      position: absolute;
-      top: 0; bottom: 0; left: 0;
-      width: 20%;
-      z-index: 50;
+    .rs-zoom-pill {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      background: rgba(15, 23, 42, 0.85);
+      color: #ffffff;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      z-index: 10000;
       cursor: pointer;
-    }
-    .rs-hotzone-center {
-      position: absolute;
-      top: 0; bottom: 0; left: 20%; right: 20%;
-      z-index: 48;
-      cursor: pointer;
-    }
-    .rs-hotzone-right {
-      position: absolute;
-      top: 0; bottom: 0; right: 0;
-      width: 20%;
-      z-index: 50;
-      cursor: pointer;
-    }
-
-    /* Paginated markdown / text in 3D book mode */
-    .rs-paged-body {
-      flex: 1;
-      width: 100%;
-      padding: 24px 28px;
-      overflow-y: auto;
-      box-sizing: border-box;
-      font-size: inherit;
-      line-height: inherit;
-      color: inherit;
-      word-break: break-word;
+      display: none;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
     }
 
     /* Floating Scrubber Bar (Google Play Books SearchScrubBar style) */
@@ -1367,6 +1098,64 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       sendPosition({ page: current, total: total, percentage: pct });
     }
 
+    function renderMathInMarkdown(text) {
+      if (!text) return '';
+      var mathBlocks = [];
+
+      var parts = text.split('$$');
+      var s = '';
+      for (var i = 0; i < parts.length; i++) {
+        if (i % 2 === 1) {
+          var id = 'KATEXDISP' + mathBlocks.length + 'Z';
+          mathBlocks.push({ id: id, math: parts[i].trim(), display: true });
+          s += id;
+        } else {
+          s += parts[i];
+        }
+      }
+
+      var inParts = s.split('$');
+      var out = '';
+      var nlChar = String.fromCharCode(10);
+      var crChar = String.fromCharCode(13);
+      for (var j = 0; j < inParts.length; j++) {
+        if (j % 2 === 1 && inParts[j].indexOf(nlChar) === -1 && inParts[j].indexOf(crChar) === -1) {
+          var idIn = 'KATEXINLN' + mathBlocks.length + 'Z';
+          mathBlocks.push({ id: idIn, math: inParts[j].trim(), display: false });
+          out += idIn;
+        } else {
+          if (j % 2 === 1) out += '$';
+          out += inParts[j];
+        }
+      }
+
+      var html = '';
+      var markedParser = (typeof marked !== 'undefined' ? marked : (typeof window !== 'undefined' ? window.marked : null));
+      if (markedParser && typeof markedParser.parse === 'function') {
+        html = markedParser.parse(out);
+      } else if (typeof markedParser === 'function') {
+        html = markedParser(out);
+      } else {
+        html = out;
+      }
+
+      for (var k = 0; k < mathBlocks.length; k++) {
+        var item = mathBlocks[k];
+        var rendered = item.math;
+        try {
+          if (window.katex && typeof window.katex.renderToString === 'function') {
+            rendered = window.katex.renderToString(item.math, {
+              displayMode: item.display,
+              throwOnError: false
+            });
+          }
+        } catch (e) {}
+        html = html.replace(item.id, rendered);
+      }
+
+      return html;
+    }
+
     function renderHtmlContent(contentHtml) {
       const root = document.getElementById('root');
       const mode = window.__readerState.mode;
@@ -1386,7 +1175,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
           const nodes = Array.from(temp.children);
           const pages = [];
           let curElements = [];
-          const MAX_CHARS_PER_PAGE = 750;
+          const MAX_CHARS_PER_PAGE = 850;
           let charCount = 0;
 
           for (const node of nodes) {
@@ -1408,26 +1197,21 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
             leaf.className = 'md-page-leaf';
             leaf.dataset.density = 'soft';
 
-            const header = document.createElement('div');
-            header.className = 'md-page-header';
-            header.innerHTML = '<span>' + escapeHtml(docName) + '</span><span>Page ' + (idx + 1) + ' of ' + totalP + '</span>';
-
             const content = document.createElement('div');
             content.className = 'md-page-content';
             pageNodes.forEach(n => content.appendChild(n.cloneNode(true)));
 
             const footer = document.createElement('div');
             footer.className = 'md-page-footer';
-            footer.innerHTML = '<span>ReadSpace 3D</span><span>' + Math.round(((idx + 1) / totalP) * 100) + '%</span>';
+            footer.textContent = (idx + 1) + ' / ' + totalP;
 
-            leaf.appendChild(header);
             leaf.appendChild(content);
             leaf.appendChild(footer);
             book.appendChild(leaf);
           });
 
-          const targetW = Math.min(window.innerWidth - 24, 460);
-          const targetH = Math.min(window.innerHeight - 80, 720);
+          const targetW = window.innerWidth;
+          const targetH = window.innerHeight;
 
           const pageFlip = new PageFlipCtor(book, {
             width: targetW,
@@ -1435,9 +1219,9 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
             size: 'fixed',
             showCover: false,
             usePortrait: true,
-            flippingTime: 600,
+            flippingTime: 420,
             drawShadow: true,
-            maxShadowOpacity: 0.65,
+            maxShadowOpacity: 0.45,
             showPageCorners: true,
             useMouseEvents: true,
             swipeDistance: 25,
@@ -1471,92 +1255,9 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
           return;
         }
 
-        // 3D Paginated Book Mode (Fallback)
-        root.innerHTML =
-          '<div class="rs-book-stage">' +
-            '<div class="rs-book-wrapper">' +
-              '<div class="rs-book-edge-left"></div>' +
-              '<div class="rs-book-container" id="rsTextContainer">' +
-                '<div class="rs-book-spine"></div>' +
-                '<div class="rs-page-base">' +
-                  '<div class="rs-page-header">' +
-                    '<span>' + escapeHtml(docName) + '</span>' +
-                    '<span>📖 ReadSpace</span>' +
-                  '</div>' +
-                  '<div class="rs-paged-body" id="rsPagedBody">' +
-                    contentHtml +
-                  '</div>' +
-                  '<div class="rs-page-footer">' +
-                    '<span>ReadSpace 3D</span>' +
-                    '<span id="rsScrollPct">0%</span>' +
-                  '</div>' +
-                '</div>' +
-                '<div class="rs-hotzone-left" id="rsTextHotzoneLeft" title="Previous Page"></div>' +
-                '<div class="rs-hotzone-center" id="rsTextHotzoneCenter" title="Toggle Controls"></div>' +
-                '<div class="rs-hotzone-right" id="rsTextHotzoneRight" title="Next Page"></div>' +
-              '</div>' +
-              '<div class="rs-book-edge-right"></div>' +
-            '</div>' +
-          '</div>';
-
-        const pBody = document.getElementById('rsPagedBody');
-        const pctEl = document.getElementById('rsScrollPct');
-        const tapL = document.getElementById('rsTextHotzoneLeft');
-        const tapC = document.getElementById('rsTextHotzoneCenter');
-        const tapR = document.getElementById('rsTextHotzoneRight');
-
-        if (pBody) {
-          pBody.onscroll = () => {
-            const max = pBody.scrollHeight - pBody.clientHeight;
-            const p = max > 0 ? Math.round((pBody.scrollTop / max) * 100) : 0;
-            if (pctEl) pctEl.textContent = p + '%';
-            updateScrubber(Math.max(1, Math.round(p / 10)), 10);
-          };
-        }
-
-        if (tapL) {
-          tapL.onclick = (e) => {
-            e.stopPropagation();
-            if (pBody) pBody.scrollBy({ top: -pBody.clientHeight * 0.85, behavior: 'smooth' });
-            playPaperTurnSound();
-            showScrubberBriefly();
-          };
-        }
-        if (tapC) {
-          tapC.onclick = (e) => {
-            e.stopPropagation();
-            toggleScrubber();
-          };
-        }
-        if (tapR) {
-          tapR.onclick = (e) => {
-            e.stopPropagation();
-            if (pBody) pBody.scrollBy({ top: pBody.clientHeight * 0.85, behavior: 'smooth' });
-            playPaperTurnSound();
-            showScrubberBriefly();
-          };
-        }
-
-        window.rsNextPage = () => {
-          if (pBody) pBody.scrollBy({ top: pBody.clientHeight * 0.85, behavior: 'smooth' });
-          playPaperTurnSound();
-          showScrubberBriefly();
-        };
-        window.rsPrevPage = () => {
-          if (pBody) pBody.scrollBy({ top: -pBody.clientHeight * 0.85, behavior: 'smooth' });
-          playPaperTurnSound();
-          showScrubberBriefly();
-        };
-        window.rsGoToPage = (p) => {
-          if (pBody) {
-            const max = pBody.scrollHeight - pBody.clientHeight;
-            pBody.scrollTo({ top: (p - 1) * (max / 9), behavior: 'smooth' });
-          }
-        };
-
-        updateScrubber(1, 10);
+        root.innerHTML = '<div class="reader-body">' + contentHtml + '</div>';
+        updateScrubber(1, 1);
       } else {
-        // Continuous Vertical Scroll Mode (Fast, responsive, native feel)
         root.innerHTML = '<div class="reader-body">' + contentHtml + '</div>';
         updateScrubber(1, 1);
       }
@@ -1609,8 +1310,11 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
             const PageFlipCtor = window.St?.PageFlip;
             if (PageFlipCtor) {
               root.innerHTML =
-                '<div class="rs-book-stage">' +
-                  '<div id="rsBook"></div>' +
+                '<div class="rs-book-stage" id="rsStage">' +
+                  '<div id="rsZoomContainer">' +
+                    '<div id="rsBook"></div>' +
+                  '</div>' +
+                  '<div class="rs-zoom-pill" id="rsZoomPill" onclick="resetZoom()">Fit (100%) ✕</div>' +
                 '</div>';
 
               const book = document.getElementById('rsBook');
@@ -1618,46 +1322,22 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
               const vp1 = p1.getViewport({ scale: 1 });
               const aspect = vp1.height / vp1.width;
 
-              const maxW = Math.min(window.innerWidth - 24, 460);
-              const maxH = Math.min(window.innerHeight - 80, 720);
-              let targetW = maxW;
-              let targetH = Math.round(targetW * aspect);
-              if (targetH > maxH) {
-                targetH = maxH;
-                targetW = Math.round(targetH / aspect);
-              }
+              const targetW = window.innerWidth;
+              const targetH = Math.min(window.innerHeight, Math.round(targetW * aspect));
 
               for (let i = 1; i <= totalPages; i++) {
                 const wrap = document.createElement('div');
                 wrap.className = 'page-canvas-wrap';
                 wrap.dataset.density = 'soft';
 
-                const header = document.createElement('div');
-                header.className = 'md-page-header';
-                header.style.position = 'absolute';
-                header.style.top = '6px';
-                header.style.left = '14px';
-                header.style.right = '14px';
-                header.style.zIndex = '5';
-                header.innerHTML = '<span>' + escapeHtml(docName) + '</span><span>Page ' + i + ' of ' + totalPages + '</span>';
-
                 const canvasHost = document.createElement('div');
                 canvasHost.className = 'rs-canvas-host';
                 canvasHost.id = 'rsPdfCanvasHost_' + i;
+                canvasHost.style.width = '100%';
+                canvasHost.style.height = '100%';
                 canvasHost.innerHTML = '<div style="color:var(--muted); font-size:12px;">Rendering…</div>';
 
-                const footer = document.createElement('div');
-                footer.className = 'md-page-footer';
-                footer.style.position = 'absolute';
-                footer.style.bottom = '6px';
-                footer.style.left = '14px';
-                footer.style.right = '14px';
-                footer.style.zIndex = '5';
-                footer.innerHTML = '<span>ReadSpace 3D</span><span>' + Math.round((i / totalPages) * 100) + '%</span>';
-
-                wrap.appendChild(header);
                 wrap.appendChild(canvasHost);
-                wrap.appendChild(footer);
                 book.appendChild(wrap);
               }
 
@@ -1701,9 +1381,9 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
                 size: 'fixed',
                 showCover: false,
                 usePortrait: true,
-                flippingTime: 650,
+                flippingTime: 480,
                 drawShadow: true,
-                maxShadowOpacity: 0.7,
+                maxShadowOpacity: 0.5,
                 showPageCorners: true,
                 useMouseEvents: true,
                 swipeDistance: 25,
@@ -1731,11 +1411,103 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
                 }
               });
 
+              // Interactive Zoom and Pan
+              let currentZoom = 1;
+              let panX = 0;
+              let panY = 0;
+
+              function updateZoomTransform() {
+                const zCont = document.getElementById('rsZoomContainer');
+                const pill = document.getElementById('rsZoomPill');
+                if (currentZoom > 1.05) {
+                  zCont.style.transform = 'scale(' + currentZoom + ') translate(' + (panX / currentZoom) + 'px, ' + (panY / currentZoom) + 'px)';
+                  if (pill) {
+                    pill.style.display = 'block';
+                    pill.textContent = 'Zoom ' + Math.round(currentZoom * 100) + '% ✕';
+                  }
+                } else {
+                  currentZoom = 1;
+                  panX = 0;
+                  panY = 0;
+                  zCont.style.transform = 'none';
+                  if (pill) pill.style.display = 'none';
+                }
+              }
+
+              function resetZoom() {
+                currentZoom = 1;
+                panX = 0;
+                panY = 0;
+                updateZoomTransform();
+              }
+              window.resetZoom = resetZoom;
+
+              // Double tap to zoom (1x <-> 2.2x)
+              let lastTapTime = 0;
+              const stage = document.getElementById('rsStage');
+              if (stage) {
+                stage.addEventListener('touchend', (e) => {
+                  if (e.changedTouches && e.changedTouches.length === 1) {
+                    const now = Date.now();
+                    if (now - lastTapTime < 320) {
+                      if (currentZoom > 1.05) {
+                        resetZoom();
+                      } else {
+                        currentZoom = 2.2;
+                        updateZoomTransform();
+                      }
+                    }
+                    lastTapTime = now;
+                  }
+                });
+
+                // Pinch to zoom gesture support
+                let initialDist = 0;
+                let initialZoom = 1;
+                let isPanning = false;
+                let panStart = { x: 0, y: 0 };
+
+                stage.addEventListener('touchstart', (e) => {
+                  if (e.touches && e.touches.length === 2) {
+                    initialDist = Math.hypot(
+                      e.touches[0].clientX - e.touches[1].clientX,
+                      e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    initialZoom = currentZoom;
+                  } else if (e.touches && e.touches.length === 1 && currentZoom > 1.05) {
+                    isPanning = true;
+                    panStart = { x: e.touches[0].clientX - panX, y: e.touches[0].clientY - panY };
+                  }
+                }, { passive: true });
+
+                stage.addEventListener('touchmove', (e) => {
+                  if (e.touches && e.touches.length === 2 && initialDist > 0) {
+                    const dist = Math.hypot(
+                      e.touches[0].clientX - e.touches[1].clientX,
+                      e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    currentZoom = Math.min(3.5, Math.max(1, initialZoom * (dist / initialDist)));
+                    updateZoomTransform();
+                  } else if (e.touches && e.touches.length === 1 && isPanning && currentZoom > 1.05) {
+                    panX = e.touches[0].clientX - panStart.x;
+                    panY = e.touches[0].clientY - panStart.y;
+                    updateZoomTransform();
+                  }
+                }, { passive: true });
+
+                stage.addEventListener('touchend', (e) => {
+                  if (!e.touches || e.touches.length < 2) initialDist = 0;
+                  if (!e.touches || e.touches.length === 0) isPanning = false;
+                });
+              }
+
               window.rsNextPage = () => {
+                if (currentZoom > 1.05) return;
                 pageFlip.flipNext();
                 showScrubberBriefly();
               };
               window.rsPrevPage = () => {
+                if (currentZoom > 1.05) return;
                 pageFlip.flipPrev();
                 showScrubberBriefly();
               };
@@ -1983,20 +1755,14 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
           if (typeof marked === 'undefined') {
             await new Promise((r) => setTimeout(r, 150));
           }
-          const parser = (typeof marked !== 'undefined' ? marked : (typeof window !== 'undefined' ? window.marked : null));
+          const dirtyHtml = renderMathInMarkdown(rawMd || '');
           const sanitizer = (typeof DOMPurify !== 'undefined' ? DOMPurify : (typeof window !== 'undefined' ? window.DOMPurify : null));
 
-          let dirtyHtml = '';
-          if (parser && typeof parser.parse === 'function') {
-            dirtyHtml = parser.parse(rawMd || '');
-          } else if (typeof parser === 'function') {
-            dirtyHtml = parser(rawMd || '');
-          } else {
-            dirtyHtml = '<pre style="white-space:pre-wrap; font-family:inherit;">' + escapeHtml(rawMd || '') + '</pre>';
-          }
-
           const clean = sanitizer && typeof sanitizer.sanitize === 'function'
-            ? sanitizer.sanitize(dirtyHtml)
+            ? sanitizer.sanitize(dirtyHtml, {
+                ADD_TAGS: ['math', 'semantics', 'mrow', 'mi', 'mo', 'msup', 'msub', 'mover', 'munder', 'mfrac', 'annotation'],
+                ADD_ATTR: ['xmlns', 'display', 'aria-hidden']
+              })
             : dirtyHtml;
 
           renderHtmlContent(clean);
