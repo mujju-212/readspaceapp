@@ -445,6 +445,8 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       overflow: hidden;
       user-select: none;
       -webkit-user-select: none;
+      touch-action: none;
+      -webkit-touch-action: none;
       z-index: 20;
     }
     #rsZoomContainer {
@@ -454,15 +456,17 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
       align-items: center;
       justify-content: center;
       transform-origin: center center;
-      transition: transform 0.15s ease-out;
+      touch-action: none;
+      -webkit-touch-action: none;
     }
     #rsBook, #rsHtmlBook {
-      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+      border: none;
+      box-shadow: none;
     }
     .page-canvas-wrap {
       width: 100%;
       height: 100%;
-      background: var(--card);
+      background: var(--bg);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -477,17 +481,15 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
     .md-page-leaf {
       width: 100%;
       height: 100%;
-      background: var(--card);
+      background: var(--bg);
       color: var(--fg);
-      padding: 24px 22px 32px;
+      padding: 24px 20px 28px;
       box-sizing: border-box;
       overflow: hidden;
+      border: none;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      will-change: transform;
-      transform: translateZ(0);
-      -webkit-transform: translateZ(0);
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;
     }
@@ -1170,11 +1172,27 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
 
           const book = document.getElementById('rsHtmlBook');
 
-          // Robust pixel-accurate height measurement to guarantee text never gets cut off!
+          // Fullscreen Google Play Books sizing & atomic element measurement
           const targetW = window.innerWidth;
           const targetH = window.innerHeight;
-          const contentWidth = Math.max(280, targetW - 44);
-          const availHeight = Math.max(300, targetH - 68);
+          const contentWidth = Math.max(260, targetW - 40);
+          const availHeight = Math.max(280, targetH - 64);
+
+          const temp = document.createElement('div');
+          temp.innerHTML = contentHtml;
+
+          // Deconstruct elements into atomic paginatable blocks (headers, p, individual li, katex formulas, tables)
+          const atomicBlocks = [];
+          Array.from(temp.children).forEach(child => {
+            if (child.tagName === 'UL' || child.tagName === 'OL') {
+              const tag = child.tagName.toLowerCase();
+              Array.from(child.children).forEach(li => {
+                atomicBlocks.push({ type: 'list-item', tag: tag, el: li });
+              });
+            } else {
+              atomicBlocks.push({ type: 'block', tag: child.tagName.toLowerCase(), el: child });
+            }
+          });
 
           const measureBox = document.createElement('div');
           measureBox.style.position = 'absolute';
@@ -1184,26 +1202,47 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
           measureBox.style.fontSize = (window.__readerState.fontSize || 16) + 'px';
           measureBox.style.lineHeight = (window.__readerState.lineHeight || 1.6);
           measureBox.className = 'md-page-content';
-          measureBox.innerHTML = contentHtml;
           document.body.appendChild(measureBox);
 
-          const elements = Array.from(measureBox.children);
           const pages = [];
-          let curElements = [];
-          let currentH = 0;
+          let curPageNodes = [];
+          let curH = 0;
+          let activeList = null;
 
-          for (let el of elements) {
-            const elH = Math.max(20, el.offsetHeight + 14);
-            if (currentH + elH > availHeight && curElements.length > 0) {
-              pages.push(curElements);
-              curElements = [el.cloneNode(true)];
-              currentH = elH;
-            } else {
-              curElements.push(el.cloneNode(true));
-              currentH += elH;
+          function flushActiveList() {
+            if (activeList && activeList.el.children.length > 0) {
+              curPageNodes.push(activeList.el);
+              activeList = null;
             }
           }
-          if (curElements.length > 0) pages.push(curElements);
+
+          for (var item of atomicBlocks) {
+            measureBox.innerHTML = '';
+            measureBox.appendChild(item.el.cloneNode(true));
+            const h = Math.max(22, measureBox.offsetHeight + 8);
+
+            if (curH + h > availHeight && (curPageNodes.length > 0 || (activeList && activeList.el.children.length > 0))) {
+              flushActiveList();
+              pages.push(curPageNodes);
+              curPageNodes = [];
+              curH = 0;
+            }
+
+            if (item.type === 'list-item') {
+              if (!activeList || activeList.tag !== item.tag) {
+                flushActiveList();
+                activeList = { tag: item.tag, el: document.createElement(item.tag) };
+              }
+              activeList.el.appendChild(item.el.cloneNode(true));
+              curH += h;
+            } else {
+              flushActiveList();
+              curPageNodes.push(item.el.cloneNode(true));
+              curH += h;
+            }
+          }
+          flushActiveList();
+          if (curPageNodes.length > 0) pages.push(curPageNodes);
           if (measureBox.parentNode) measureBox.parentNode.removeChild(measureBox);
 
           const totalP = Math.max(1, pages.length);
@@ -1215,7 +1254,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
 
             const content = document.createElement('div');
             content.className = 'md-page-content';
-            pageNodes.forEach(n => content.appendChild(n.cloneNode(true)));
+            pageNodes.forEach(n => content.appendChild(n));
 
             const footer = document.createElement('div');
             footer.className = 'md-page-footer';
@@ -1232,7 +1271,7 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
             size: 'fixed',
             showCover: false,
             usePortrait: true,
-            flippingTime: 420,
+            flippingTime: 400,
             drawShadow: true,
             maxShadowOpacity: 0.45,
             showPageCorners: true,
@@ -1492,32 +1531,39 @@ function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: 
                 let panStart = { x: 0, y: 0 };
 
                 stage.addEventListener('touchstart', (e) => {
-                  if (e.touches && e.touches.length === 2) {
+                  if (e.touches && e.touches.length >= 2) {
+                    e.preventDefault();
+                    if (window.__pageFlip) {
+                      try { window.__pageFlip.getFlipController().stopMove(); } catch (err) {}
+                    }
                     initialDist = Math.hypot(
                       e.touches[0].clientX - e.touches[1].clientX,
                       e.touches[0].clientY - e.touches[1].clientY
                     );
                     initialZoom = currentZoom;
                   } else if (e.touches && e.touches.length === 1 && currentZoom > 1.05) {
+                    e.preventDefault();
                     isPanning = true;
                     panStart = { x: e.touches[0].clientX - panX, y: e.touches[0].clientY - panY };
                   }
-                }, { passive: true });
+                }, { passive: false });
 
                 stage.addEventListener('touchmove', (e) => {
-                  if (e.touches && e.touches.length === 2 && initialDist > 0) {
+                  if (e.touches && e.touches.length >= 2 && initialDist > 0) {
+                    e.preventDefault();
                     const dist = Math.hypot(
                       e.touches[0].clientX - e.touches[1].clientX,
                       e.touches[0].clientY - e.touches[1].clientY
                     );
-                    currentZoom = Math.min(3.5, Math.max(1, initialZoom * (dist / initialDist)));
+                    currentZoom = Math.min(3.8, Math.max(1, initialZoom * (dist / initialDist)));
                     updateZoomTransform(false);
                   } else if (e.touches && e.touches.length === 1 && isPanning && currentZoom > 1.05) {
+                    e.preventDefault();
                     panX = e.touches[0].clientX - panStart.x;
                     panY = e.touches[0].clientY - panStart.y;
                     updateZoomTransform(false);
                   }
-                }, { passive: true });
+                }, { passive: false });
 
                 stage.addEventListener('touchend', (e) => {
                   if (!e.touches || e.touches.length < 2) initialDist = 0;
