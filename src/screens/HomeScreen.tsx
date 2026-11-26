@@ -240,11 +240,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, settings }) 
       const picked = await pickDocuments();
       if (picked.length > 0) {
         const doc = picked[0];
-        setLoadingOverlay(true);
-        setLoadingOverlayMsg(`Opening ${doc.name}…`);
-        await Storage.saveDoc(doc);
-        await loadData();
-        setLoadingOverlay(false);
+        void Storage.saveDoc(doc);
         navigation.navigate('Reader', { doc, workspace: activeWorkspace || undefined });
       }
     } catch (err: any) {

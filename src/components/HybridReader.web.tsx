@@ -466,6 +466,9 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     }
   }, [onPositionChange]);
 
+  const initialSettingsRef = useRef(settings);
+  const hasMountedSettingsRef = useRef(false);
+
   const postSettingsToReader = () => {
     const payload = JSON.stringify({
       action: 'updateSettings',
@@ -494,9 +497,19 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
   };
 
   useEffect(() => {
+    if (!hasMountedSettingsRef.current) {
+      hasMountedSettingsRef.current = true;
+      return;
+    }
     postSettingsToReader();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
+
+  const handleWebViewLoaded = () => {
+    if (settings !== initialSettingsRef.current) {
+      postSettingsToReader();
+    }
+  };
 
   const handleMessage = (event: any) => {
     try {
@@ -532,7 +545,7 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
         <iframe
           ref={iframeRef}
           srcDoc={htmlContent}
-          onLoad={postSettingsToReader}
+          onLoad={handleWebViewLoaded}
           style={{
             width: '100%',
             height: '100%',
@@ -553,7 +566,7 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
           originWhitelist={['*']}
           source={{ html: htmlContent }}
           onMessage={handleMessage}
-          onLoadEnd={postSettingsToReader}
+          onLoadEnd={handleWebViewLoaded}
           javaScriptEnabled={true}
           domStorageEnabled={true}
           allowFileAccess={true}

@@ -5,68 +5,42 @@ import {
   OFFLINE_JSZIP_B64,
   OFFLINE_MAMMOTH_B64,
   OFFLINE_PDFJS_B64,
-  OFFLINE_PAGEFLIP_B64,
   OFFLINE_KATEX_B64,
   OFFLINE_KATEX_CSS,
 } from '../vendor/offlineVendors';
-function getRequiredVendorBundles(kind?: string): string[] {
-  switch (kind) {
-    case 'pdf':
-      return [OFFLINE_PDFJS_B64, OFFLINE_PAGEFLIP_B64];
-    case 'markdown':
-      return [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64];
-    case 'docx':
-      return [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64];
-    case 'pptx':
-      return [OFFLINE_JSZIP_B64, OFFLINE_PAGEFLIP_B64];
-    case 'html':
-      return [OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64];
-    default:
-      return [OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64];
+import { OFFLINE_PDFJS_WORKER_B64 } from '../vendor/offlinePdfWorker';
+
+function docNeedsKatex(doc: MobileDoc): boolean {
+  if (doc.kind === 'pdf' || doc.kind === 'pptx' || doc.kind === 'image' || doc.kind === 'audio' || doc.kind === 'video') {
+    return false;
+  }
+  if (!doc.base64Data) return doc.kind === 'markdown';
+  try {
+    const bin = atob(doc.base64Data);
+    return bin.indexOf('$') !== -1 || bin.indexOf('\\(') !== -1 || bin.indexOf('\\[') !== -1;
+  } catch {
+    return doc.kind === 'markdown';
   }
 }
 
-function getFallbackCdns(kind?: string) {
-  const pageFlipCdn = '<script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>';
-  const katexCssCdn = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">';
-  const katexJsCdn = '<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>';
-  switch (kind) {
+function getRequiredVendorBundles(doc: MobileDoc, includeKatex: boolean): string[] {
+  switch (doc.kind) {
     case 'pdf':
-      return [
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>',
-        pageFlipCdn,
-      ];
+      return [OFFLINE_PDFJS_B64];
     case 'markdown':
-      return [
-        katexCssCdn,
-        katexJsCdn,
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>',
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
-        pageFlipCdn,
-      ];
+      return includeKatex
+        ? [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64]
+        : [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64];
     case 'docx':
-      return [
-        katexCssCdn,
-        katexJsCdn,
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>',
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>',
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
-        pageFlipCdn,
-      ];
+      return includeKatex
+        ? [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64]
+        : [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64];
     case 'pptx':
-      return [
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>',
-        pageFlipCdn,
-      ];
+      return [OFFLINE_JSZIP_B64];
     case 'html':
-      return [
-        katexCssCdn,
-        katexJsCdn,
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>',
-        pageFlipCdn,
-      ];
+      return includeKatex ? [OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64] : [OFFLINE_DOMPURIFY_B64];
     default:
-      return [katexCssCdn, katexJsCdn, pageFlipCdn];
+      return includeKatex ? [OFFLINE_KATEX_B64] : [];
   }
 }
 
@@ -80,7 +54,8 @@ function escapeHtmlAttr(str: string): string {
 
 export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeColors: any): string {
   const safeDocTitle = escapeHtmlAttr(doc.name || 'Document');
-  const bundlesToRun = getRequiredVendorBundles(doc.kind);
+  const includeKatex = docNeedsKatex(doc);
+  const bundlesToRun = getRequiredVendorBundles(doc, includeKatex);
   const bundleScript = bundlesToRun.length > 0
     ? `
   <script>
@@ -88,36 +63,35 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
     function loadBundle(b64) {
       if (!b64) return;
       try {
-        var code = decodeURIComponent(escape(atob(b64)));
+        var bin = atob(b64);
+        var code = bin;
+        if (/[^\\x00-\\x7f]/.test(bin) && typeof TextDecoder !== 'undefined') {
+          var bytes = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          code = new TextDecoder('utf-8').decode(bytes);
+        }
         var s = document.createElement('script');
         s.textContent = code;
         document.head.appendChild(s);
       } catch(e) {
         try {
-          var s2 = document.createElement('script');
-          s2.textContent = atob(b64);
-          document.head.appendChild(s2);
+          (0, eval)(atob(b64));
         } catch(e2) {
-          try {
-            (0, eval)(atob(b64));
-          } catch(e3) {
-            console.warn('Bundle load error:', e3);
-          }
+          console.warn('Bundle load error:', e2);
         }
       }
     }
     ${bundlesToRun.map((b) => `loadBundle(${JSON.stringify(b)});`).join('\n    ')}
-    try {
+    ${includeKatex ? `try {
       var katexCss = atob(${JSON.stringify(OFFLINE_KATEX_CSS)});
       var sStyle = document.createElement('style');
       sStyle.textContent = katexCss;
       document.head.appendChild(sStyle);
-    } catch(e) {}
+    } catch(e) {}` : ''}
   })();
   </script>`
     : '';
 
-  const fallbackCdns = getFallbackCdns(doc.kind).join('\n  ');
   const nightLightOpacity = ((settings.nightLight || 0) / 100) * 0.42;
 
   return `
@@ -128,7 +102,6 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>${safeDocTitle}</title>
   ${bundleScript}
-  ${fallbackCdns}
   <style>
     :root {
       --bg: ${themeColors.bg};
@@ -171,15 +144,15 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
     body[data-align="left"] .md-page-content p,
     body[data-align="left"] .md-page-content li { text-align: left; }
 
-    /* Amber Night Light Filter (Play Books style blue-light reduction) */
+    /* Amber Night Light Filter (only active when nightLight > 0 to avoid idle GPU blend pass) */
     .rs-nightlight-overlay {
       position: fixed;
       inset: 0;
       pointer-events: none;
+      display: ${nightLightOpacity > 0 ? 'block' : 'none'};
       background-color: rgba(255, 150, 10, var(--nightlight-alpha, 0));
       mix-blend-mode: multiply;
       z-index: 99999;
-      transition: background-color 0.3s ease;
     }
 
     #root {
@@ -216,10 +189,77 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       -webkit-touch-action: none;
     }
     #rsBook, #rsHtmlBook {
+      position: relative;
       border: none;
       box-shadow: none;
+      perspective: 2400px;
+      transform-style: preserve-3d;
+      overflow: visible;
+    }
+    .rs-book-spine {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 24px;
+      pointer-events: none;
+      background: linear-gradient(to right, rgba(0,0,0,0.16) 0%, rgba(0,0,0,0.05) 45%, transparent 100%);
+      z-index: 25;
+    }
+    .rs-under-shadow {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(to right, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.08) 35%, transparent 75%);
+      z-index: 22;
+      opacity: 0.45;
+      transition: opacity 0.32s ease;
+    }
+    .rs-curl-leaf {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      transform-origin: left center;
+      transform-style: preserve-3d;
+      z-index: 30;
+      pointer-events: none;
+      will-change: transform;
+    }
+    .rs-leaf-front, .rs-leaf-back {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+    .rs-leaf-front { z-index: 2; }
+    .rs-leaf-back {
+      z-index: 1;
+      transform: rotateY(180deg);
+      background: var(--panel);
+    }
+    .rs-leaf-back-inner {
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+      opacity: 0.22;
+      pointer-events: none;
+    }
+    .rs-curl-lighting {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(to right, rgba(0,0,0,0.18) 0%, rgba(255,255,255,0.22) 45%, rgba(0,0,0,0.22) 100%);
+      opacity: 0.35;
+      z-index: 5;
     }
     .page-canvas-wrap {
+      position: absolute;
+      inset: 0;
       width: 100%;
       height: 100%;
       background: var(--bg);
@@ -235,6 +275,8 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       display: block;
     }
     .md-page-leaf {
+      position: absolute;
+      inset: 0;
       width: 100%;
       height: 100%;
       background: var(--bg);
@@ -246,11 +288,6 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      will-change: transform;
-      transform: translateZ(0);
-      -webkit-transform: translateZ(0);
-      backface-visibility: hidden;
-      -webkit-backface-visibility: hidden;
     }
     .md-page-content {
       flex: 1 1 auto;
@@ -352,7 +389,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       position: fixed;
       top: 16px;
       right: 16px;
-      background: rgba(15, 23, 42, 0.85);
+      background: rgba(15, 23, 42, 0.92);
       color: #ffffff;
       padding: 6px 14px;
       border-radius: 20px;
@@ -361,8 +398,6 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       z-index: 10000;
       cursor: pointer;
       display: none;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
       box-shadow: 0 4px 12px rgba(0,0,0,0.25);
     }
 
@@ -379,13 +414,11 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 999px;
-      box-shadow: 0 8px 30px rgba(0,0,0,0.22);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
       z-index: 9000;
-      transition: opacity 0.3s ease, transform 0.3s ease;
+      transition: opacity 0.22s ease, transform 0.22s ease;
       opacity: 1;
       max-width: 94vw;
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
     }
     .rs-scrub-bar.hidden-bar {
       opacity: 0;
@@ -787,6 +820,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
     const docBase64 = ${JSON.stringify(doc.base64Data || '')};
     const docUri = ${JSON.stringify(doc.uri || '')};
     const docStreamUrl = ${JSON.stringify((doc as any).streamUrl || '')};
+    const pdfWorkerB64 = ${doc.kind === 'pdf' ? JSON.stringify(OFFLINE_PDFJS_WORKER_B64) : '""'};
 
     window.__readerState = {
       mode: ${JSON.stringify(settings.readingMode || 'scroll')},
@@ -1170,7 +1204,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
         loader.onload = done;
         loader.onerror = () => resolve();
         loader.src = src;
-        setTimeout(resolve, 1500);
+        setTimeout(resolve, 400);
       })));
       return doc.body.innerHTML;
     }
@@ -1391,9 +1425,11 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
             remaining = remaining.replace(/^\\s+/, '');
             if (!remaining) break;
           }
+          const prevH = currentHeight();
           const fullNode = document.createTextNode(remaining);
           target.appendChild(fullNode);
           if (fits()) break;
+          const fullH = currentHeight();
           target.removeChild(fullNode);
 
           const pageHasContent = hasMeaningfulContent(measureEl);
@@ -1402,6 +1438,24 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
           let lo = 0;
           let hi = remaining.length;
           let best = 0;
+          // Smart proportional bracket to cut binary search reflows by ~3x
+          if (fullH > prevH && effectiveMaxHeight > prevH) {
+            const est = Math.max(1, Math.min(remaining.length - 1, Math.floor(remaining.length * ((effectiveMaxHeight - prevH) / (fullH - prevH)))));
+            const lowGuess = Math.max(0, Math.floor(est * 0.72));
+            const highGuess = Math.min(remaining.length, Math.ceil(est * 1.32));
+            probe.textContent = remaining.slice(0, lowGuess);
+            if (fits()) {
+              best = lowGuess;
+              lo = lowGuess + 1;
+            }
+            probe.textContent = remaining.slice(0, highGuess);
+            if (!fits()) {
+              hi = highGuess - 1;
+            } else {
+              best = highGuess;
+              lo = highGuess + 1;
+            }
+          }
           while (lo <= hi) {
             const mid = (lo + hi) >> 1;
             probe.textContent = remaining.slice(0, mid);
@@ -1703,6 +1757,389 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       return pages.length > 0 ? pages : [rawHtml];
     }
 
+    function createRsBookCurl(bookEl, items, opts) {
+      opts = opts || {};
+      const total = items.length;
+      let curIdx = Math.max(0, Math.min(total - 1, opts.startPage || 0));
+      let state = 'read'; // 'read' | 'user_fold' | 'flipping'
+      const listeners = new Map();
+      let activeLeaf = null;
+      let activeShadow = null;
+      let animTimer = null;
+      let destroyed = false;
+
+      const width = Math.max(200, opts.width || bookEl.clientWidth || window.innerWidth);
+      const height = Math.max(240, opts.height || bookEl.clientHeight || window.innerHeight);
+      const flipMs = opts.flippingTime || 320;
+
+      bookEl.style.width = width + 'px';
+      bookEl.style.height = height + 'px';
+
+      const spine = document.createElement('div');
+      spine.className = 'rs-book-spine';
+      bookEl.appendChild(spine);
+
+      function emit(ev, data) {
+        const arr = listeners.get(ev);
+        if (!arr) return;
+        for (let i = 0; i < arr.length; i++) {
+          try { arr[i]({ data: data, object: api }); } catch (e) {}
+        }
+      }
+
+      function setState(next) {
+        if (state !== next) {
+          state = next;
+          emit('changeState', next);
+        }
+      }
+
+      function showOnly(idx) {
+        for (let i = 0; i < total; i++) {
+          items[i].style.display = i === idx ? 'flex' : 'none';
+          items[i].style.zIndex = i === idx ? '10' : '1';
+        }
+      }
+
+      function cloneLeafNode(srcEl, isVerso) {
+        const clone = srcEl.cloneNode(true);
+        clone.style.display = 'flex';
+        clone.style.position = 'relative';
+        clone.style.inset = '0';
+        clone.style.width = '100%';
+        clone.style.height = '100%';
+        const srcCanvases = srcEl.querySelectorAll('canvas');
+        const dstCanvases = clone.querySelectorAll('canvas');
+        for (let i = 0; i < srcCanvases.length && i < dstCanvases.length; i++) {
+          const sc = srcCanvases[i];
+          const dc = dstCanvases[i];
+          dc.width = sc.width;
+          dc.height = sc.height;
+          const ctx = dc.getContext('2d');
+          if (ctx && sc.width > 0 && sc.height > 0) {
+            ctx.drawImage(sc, 0, 0);
+          }
+        }
+        if (isVerso) {
+          const wrap = document.createElement('div');
+          wrap.className = 'rs-leaf-back-inner';
+          wrap.appendChild(clone);
+          return wrap;
+        }
+        return clone;
+      }
+
+      function cleanupCurl() {
+        if (animTimer) {
+          clearTimeout(animTimer);
+          animTimer = null;
+        }
+        if (activeLeaf && activeLeaf.parentNode) activeLeaf.parentNode.removeChild(activeLeaf);
+        if (activeShadow && activeShadow.parentNode) activeShadow.parentNode.removeChild(activeShadow);
+        activeLeaf = null;
+        activeShadow = null;
+      }
+
+      function mountCurlPair(fromIdx, toIdx, dir) {
+        cleanupCurl();
+        const frontIdx = dir === 'next' ? fromIdx : toIdx;
+        const baseIdx = dir === 'next' ? toIdx : fromIdx;
+
+        for (let i = 0; i < total; i++) {
+          if (i === baseIdx) {
+            items[i].style.display = 'flex';
+            items[i].style.zIndex = '10';
+          } else {
+            items[i].style.display = 'none';
+            items[i].style.zIndex = '1';
+          }
+        }
+
+        const shadow = document.createElement('div');
+        shadow.className = 'rs-under-shadow';
+        bookEl.appendChild(shadow);
+        activeShadow = shadow;
+
+        const leaf = document.createElement('div');
+        leaf.className = 'rs-curl-leaf';
+
+        const front = document.createElement('div');
+        front.className = 'rs-leaf-front';
+        front.appendChild(cloneLeafNode(items[frontIdx], false));
+        const light = document.createElement('div');
+        light.className = 'rs-curl-lighting';
+        front.appendChild(light);
+
+        const back = document.createElement('div');
+        back.className = 'rs-leaf-back';
+        back.appendChild(cloneLeafNode(items[frontIdx], true));
+
+        leaf.appendChild(front);
+        leaf.appendChild(back);
+        bookEl.appendChild(leaf);
+        activeLeaf = leaf;
+        return { leaf, shadow, light };
+      }
+
+      function finishFlip(targetIdx) {
+        cleanupCurl();
+        curIdx = targetIdx;
+        showOnly(curIdx);
+        setState('read');
+        emit('flip', curIdx);
+      }
+
+      function animateFlip(dir, fromIdx, toIdx, startProgress) {
+        if (destroyed) return;
+        setState('flipping');
+        const pair = activeLeaf ? { leaf: activeLeaf, shadow: activeShadow } : mountCurlPair(fromIdx, toIdx, dir);
+        const leaf = pair.leaf;
+        const shadow = pair.shadow;
+
+        if (startProgress === undefined) {
+          const initAngle = dir === 'next' ? 0 : -180;
+          leaf.style.transition = 'none';
+          leaf.style.transform = 'rotateY(' + initAngle + 'deg) translateZ(0px)';
+          if (shadow) shadow.style.opacity = dir === 'next' ? '0.45' : '0.05';
+          void leaf.offsetWidth;
+        }
+
+        const endAngle = dir === 'next' ? -180 : 0;
+        leaf.style.transition = 'transform ' + flipMs + 'ms cubic-bezier(0.22, 1, 0.36, 1)';
+        leaf.style.transform = 'rotateY(' + endAngle + 'deg) translateZ(0px)';
+        if (shadow) {
+          shadow.style.transition = 'opacity ' + flipMs + 'ms ease';
+          shadow.style.opacity = dir === 'next' ? '0' : '0.45';
+        }
+
+        animTimer = setTimeout(() => {
+          finishFlip(toIdx);
+        }, flipMs + 20);
+      }
+
+      function snapBack(dir, fromIdx) {
+        if (!activeLeaf) {
+          showOnly(fromIdx);
+          setState('read');
+          return;
+        }
+        setState('flipping');
+        const backAngle = dir === 'next' ? 0 : -180;
+        activeLeaf.style.transition = 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)';
+        activeLeaf.style.transform = 'rotateY(' + backAngle + 'deg) translateZ(0px)';
+        animTimer = setTimeout(() => {
+          finishFlip(fromIdx);
+        }, 215);
+      }
+
+      // Interactive touch drag + edge tap
+      let drag = null;
+      function onTouchStart(e) {
+        if (destroyed || state === 'flipping') return;
+        if (!e.touches || e.touches.length !== 1 || window.__readerState.currentZoom > 1.05) {
+          if (state === 'user_fold' && drag) {
+            snapBack(drag.dir, curIdx);
+          }
+          drag = null;
+          return;
+        }
+        drag = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+          time: Date.now(),
+          folding: false,
+          dir: null,
+          toIdx: curIdx,
+          progress: 0,
+        };
+      }
+
+      function onTouchMove(e) {
+        if (!drag || destroyed || state === 'flipping') return;
+        if (!e.touches || e.touches.length !== 1 || window.__readerState.currentZoom > 1.05) {
+          if (drag.folding) snapBack(drag.dir, curIdx);
+          drag = null;
+          return;
+        }
+        const dx = e.touches[0].clientX - drag.x;
+        const dy = e.touches[0].clientY - drag.y;
+
+        if (!drag.folding) {
+          if (Math.abs(dx) < 10 || Math.abs(dy) > Math.abs(dx) * 0.9) return;
+          const dir = dx < 0 ? 'next' : 'prev';
+          const toIdx = dir === 'next' ? curIdx + 1 : curIdx - 1;
+          if (toIdx < 0 || toIdx >= total) {
+            drag = null;
+            return;
+          }
+          drag.folding = true;
+          drag.dir = dir;
+          drag.toIdx = toIdx;
+          setState('user_fold');
+          if (opts.onBeforeFlip) opts.onBeforeFlip(toIdx);
+          mountCurlPair(curIdx, toIdx, dir);
+        }
+
+        if (drag.folding && activeLeaf) {
+          e.preventDefault();
+          const rawProg = drag.dir === 'next' ? -dx / width : dx / width;
+          const prog = Math.max(0, Math.min(1, rawProg));
+          drag.progress = prog;
+          const angle = drag.dir === 'next' ? -prog * 180 : -(1 - prog) * 180;
+          const liftZ = Math.sin(prog * Math.PI) * 16;
+          activeLeaf.style.transition = 'none';
+          activeLeaf.style.transform = 'rotateY(' + angle.toFixed(2) + 'deg) translateZ(' + liftZ.toFixed(1) + 'px)';
+          if (activeShadow) {
+            activeShadow.style.transition = 'none';
+            activeShadow.style.opacity = String(drag.dir === 'next' ? (1 - prog) * 0.45 : prog * 0.45);
+          }
+        }
+      }
+
+      function onTouchEnd(e) {
+        if (!drag || destroyed) return;
+        const d = drag;
+        drag = null;
+        if (d.folding) {
+          const dt = Math.max(1, Date.now() - d.time);
+          const tx = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : d.x;
+          const vel = Math.abs(tx - d.x) / dt;
+          if (d.progress > 0.22 || vel > 0.35) {
+            animateFlip(d.dir, curIdx, d.toIdx, d.progress);
+          } else {
+            snapBack(d.dir, curIdx);
+          }
+          return;
+        }
+        if (e.changedTouches && e.changedTouches.length === 1 && window.__readerState.currentZoom <= 1.05) {
+          const tx = e.changedTouches[0].clientX;
+          const ty = e.changedTouches[0].clientY;
+          const moved = Math.hypot(tx - d.x, ty - d.y);
+          const dt = Date.now() - d.time;
+          if (moved < 12 && dt < 350) {
+            const rect = bookEl.getBoundingClientRect();
+            const relX = (tx - rect.left) / Math.max(1, rect.width);
+            if (relX > 0.80) api.flipNext();
+            else if (relX < 0.20) api.flipPrev();
+          }
+        }
+      }
+
+      bookEl.addEventListener('touchstart', onTouchStart, { passive: true });
+      bookEl.addEventListener('touchmove', onTouchMove, { passive: false });
+      bookEl.addEventListener('touchend', onTouchEnd, { passive: true });
+
+      // Mouse drag / edge-click support for desktop & web preview
+      let mouseDrag = null;
+      function onMouseDown(e) {
+        if (destroyed || state === 'flipping' || e.button !== 0 || window.__readerState.currentZoom > 1.05) return;
+        mouseDrag = { x: e.clientX, y: e.clientY, time: Date.now(), folding: false, dir: null, toIdx: curIdx, progress: 0 };
+      }
+      function onMouseMove(e) {
+        if (!mouseDrag || destroyed || state === 'flipping') return;
+        const dx = e.clientX - mouseDrag.x;
+        const dy = e.clientY - mouseDrag.y;
+        if (!mouseDrag.folding) {
+          if (Math.abs(dx) < 12 || Math.abs(dy) > Math.abs(dx) * 0.9) return;
+          const dir = dx < 0 ? 'next' : 'prev';
+          const toIdx = dir === 'next' ? curIdx + 1 : curIdx - 1;
+          if (toIdx < 0 || toIdx >= total) { mouseDrag = null; return; }
+          mouseDrag.folding = true;
+          mouseDrag.dir = dir;
+          mouseDrag.toIdx = toIdx;
+          setState('user_fold');
+          if (opts.onBeforeFlip) opts.onBeforeFlip(toIdx);
+          mountCurlPair(curIdx, toIdx, dir);
+        }
+        if (mouseDrag.folding && activeLeaf) {
+          const rawProg = mouseDrag.dir === 'next' ? -dx / width : dx / width;
+          const prog = Math.max(0, Math.min(1, rawProg));
+          mouseDrag.progress = prog;
+          const angle = mouseDrag.dir === 'next' ? -prog * 180 : -(1 - prog) * 180;
+          const liftZ = Math.sin(prog * Math.PI) * 16;
+          activeLeaf.style.transition = 'none';
+          activeLeaf.style.transform = 'rotateY(' + angle.toFixed(2) + 'deg) translateZ(' + liftZ.toFixed(1) + 'px)';
+        }
+      }
+      function onMouseUp(e) {
+        if (!mouseDrag || destroyed) return;
+        const d = mouseDrag;
+        mouseDrag = null;
+        if (d.folding) {
+          const dt = Math.max(1, Date.now() - d.time);
+          const vel = Math.abs(e.clientX - d.x) / dt;
+          if (d.progress > 0.22 || vel > 0.35) animateFlip(d.dir, curIdx, d.toIdx, d.progress);
+          else snapBack(d.dir, curIdx);
+          return;
+        }
+        const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+        if (moved < 8 && window.__readerState.currentZoom <= 1.05) {
+          const rect = bookEl.getBoundingClientRect();
+          const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
+          if (relX > 0.80) api.flipNext();
+          else if (relX < 0.20) api.flipPrev();
+        }
+      }
+      bookEl.addEventListener('mousedown', onMouseDown);
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+
+      showOnly(curIdx);
+
+      const api = {
+        getCurrentPageIndex: () => curIdx,
+        getPageCount: () => total,
+        getState: () => state,
+        on: (ev, cb) => {
+          if (!listeners.has(ev)) listeners.set(ev, []);
+          listeners.get(ev).push(cb);
+          return api;
+        },
+        off: (ev) => listeners.delete(ev),
+        getFlipController: () => ({
+          stopMove: () => {
+            if (state === 'user_fold' && drag) {
+              snapBack(drag.dir, curIdx);
+              drag = null;
+            }
+            if (state === 'user_fold' && mouseDrag) {
+              snapBack(mouseDrag.dir, curIdx);
+              mouseDrag = null;
+            }
+          },
+        }),
+        flipNext: () => {
+          if (destroyed || state !== 'read' || curIdx >= total - 1) return;
+          animateFlip('next', curIdx, curIdx + 1);
+        },
+        flipPrev: () => {
+          if (destroyed || state !== 'read' || curIdx <= 0) return;
+          animateFlip('prev', curIdx, curIdx - 1);
+        },
+        turnToPage: (idx) => {
+          if (destroyed) return;
+          const target = Math.max(0, Math.min(total - 1, idx));
+          cleanupCurl();
+          curIdx = target;
+          showOnly(curIdx);
+          setState('read');
+          emit('flip', curIdx);
+        },
+        destroy: () => {
+          destroyed = true;
+          cleanupCurl();
+          bookEl.removeEventListener('touchstart', onTouchStart);
+          bookEl.removeEventListener('touchmove', onTouchMove);
+          bookEl.removeEventListener('touchend', onTouchEnd);
+          bookEl.removeEventListener('mousedown', onMouseDown);
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', onMouseUp);
+          listeners.clear();
+        },
+      };
+      return api;
+    }
+
     async function renderHtmlContent(contentHtml, opts) {
       opts = opts || {};
       window.__lastContentHtml = contentHtml;
@@ -1726,164 +2163,139 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       }
 
       if (mode === 'curl') {
-        const PageFlipCtor = window.St?.PageFlip;
-        if (PageFlipCtor) {
-          let anchorSnippet = '';
-          let anchorRatio = 0;
-          if (opts.preserveAnchor && window.__readerState.currentPages && window.__readerState.currentPages.length > 0) {
-            const curIdx = Math.max(0, Math.min(window.__readerState.currentPages.length - 1, (window.__readerState.page || 1) - 1));
-            anchorSnippet = extractPlainTextMobile(window.__readerState.currentPages[curIdx]).slice(0, 48);
-            anchorRatio = window.__readerState.currentPages.length > 1 ? curIdx / (window.__readerState.currentPages.length - 1) : 0;
-          }
+        let anchorSnippet = '';
+        let anchorRatio = 0;
+        if (opts.preserveAnchor && window.__readerState.currentPages && window.__readerState.currentPages.length > 0) {
+          const curIdx = Math.max(0, Math.min(window.__readerState.currentPages.length - 1, (window.__readerState.page || 1) - 1));
+          anchorSnippet = extractPlainTextMobile(window.__readerState.currentPages[curIdx]).slice(0, 48);
+          anchorRatio = window.__readerState.currentPages.length > 1 ? curIdx / (window.__readerState.currentPages.length - 1) : 0;
+        }
 
-          try {
-            if (document.fonts && document.fonts.ready) {
-              await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 400))]);
-            }
-          } catch (e) {}
+        const targetW = window.innerWidth;
+        const targetH = window.innerHeight;
 
-          const targetW = window.innerWidth;
-          const targetH = window.innerHeight;
+        // Measure exact .md-page-content dimensions from a real .md-page-leaf template
+        const probeLeaf = document.createElement('div');
+        probeLeaf.className = 'md-page-leaf';
+        probeLeaf.style.position = 'fixed';
+        probeLeaf.style.left = '-99999px';
+        probeLeaf.style.top = '0';
+        probeLeaf.style.width = targetW + 'px';
+        probeLeaf.style.height = targetH + 'px';
+        probeLeaf.style.visibility = 'hidden';
+        const probeContent = document.createElement('div');
+        probeContent.className = 'md-page-content';
+        const probeFooter = document.createElement('div');
+        probeFooter.className = 'md-page-footer';
+        probeFooter.textContent = '1 / 1';
+        probeLeaf.appendChild(probeContent);
+        probeLeaf.appendChild(probeFooter);
+        document.body.appendChild(probeLeaf);
+        const contentWidth = Math.max(220, probeContent.clientWidth || (targetW - 36));
+        const availHeight = Math.max(220, probeContent.clientHeight || (targetH - 76));
+        document.body.removeChild(probeLeaf);
 
-          // Measure exact .md-page-content dimensions from a real .md-page-leaf template
-          const probeLeaf = document.createElement('div');
-          probeLeaf.className = 'md-page-leaf';
-          probeLeaf.style.position = 'fixed';
-          probeLeaf.style.left = '-99999px';
-          probeLeaf.style.top = '0';
-          probeLeaf.style.width = targetW + 'px';
-          probeLeaf.style.height = targetH + 'px';
-          probeLeaf.style.visibility = 'hidden';
-          const probeContent = document.createElement('div');
-          probeContent.className = 'md-page-content';
-          const probeFooter = document.createElement('div');
-          probeFooter.className = 'md-page-footer';
-          probeFooter.textContent = '1 / 1';
-          probeLeaf.appendChild(probeContent);
-          probeLeaf.appendChild(probeFooter);
-          document.body.appendChild(probeLeaf);
-          const contentWidth = Math.max(220, probeContent.clientWidth || (targetW - 36));
-          const availHeight = Math.max(220, probeContent.clientHeight || (targetH - 76));
-          document.body.removeChild(probeLeaf);
+        const preparedHtml = await prepareImagesForPagination(contentHtml, contentWidth);
+        const pages = paginateHtmlMobile(preparedHtml, contentWidth, availHeight);
+        window.__readerState.currentPages = pages;
+        const totalP = Math.max(1, pages.length);
 
-          const preparedHtml = await prepareImagesForPagination(contentHtml, contentWidth);
-          const pages = paginateHtmlMobile(preparedHtml, contentWidth, availHeight);
-          window.__readerState.currentPages = pages;
-          const totalP = Math.max(1, pages.length);
-
-          let startPage = 1;
-          if (opts.preserveAnchor) {
-            if (anchorSnippet && anchorSnippet.length >= 8) {
-              const needle = anchorSnippet.slice(0, 28);
-              const expectedIdx = Math.round(anchorRatio * Math.max(0, totalP - 1));
-              let bestIdx = -1;
-              let bestDist = Infinity;
-              for (let pi = 0; pi < pages.length; pi++) {
-                if (extractPlainTextMobile(pages[pi]).indexOf(needle) !== -1) {
-                  const dist = Math.abs(pi - expectedIdx);
-                  if (dist < bestDist) {
-                    bestDist = dist;
-                    bestIdx = pi;
-                  }
+        let startPage = 1;
+        if (opts.preserveAnchor) {
+          if (anchorSnippet && anchorSnippet.length >= 8) {
+            const needle = anchorSnippet.slice(0, 28);
+            const expectedIdx = Math.round(anchorRatio * Math.max(0, totalP - 1));
+            let bestIdx = -1;
+            let bestDist = Infinity;
+            for (let pi = 0; pi < pages.length; pi++) {
+              if (extractPlainTextMobile(pages[pi]).indexOf(needle) !== -1) {
+                const dist = Math.abs(pi - expectedIdx);
+                if (dist < bestDist) {
+                  bestDist = dist;
+                  bestIdx = pi;
                 }
               }
-              if (bestIdx >= 0) startPage = bestIdx + 1;
-              else startPage = Math.max(1, Math.min(totalP, Math.round(anchorRatio * Math.max(0, totalP - 1)) + 1));
-            } else {
-              startPage = Math.max(1, Math.min(totalP, Math.round(anchorRatio * Math.max(0, totalP - 1)) + 1));
             }
-          } else if (opts.fromMode === 'scroll') {
-            startPage = Math.max(1, Math.min(totalP, Math.round(prevScrollRatio * Math.max(0, totalP - 1)) + 1));
-          } else if (!window.__readerState.initialPageApplied) {
-            startPage = Math.max(1, Math.min(totalP, window.__readerState.initialPage || 1));
-            window.__readerState.initialPageApplied = true;
+            if (bestIdx >= 0) startPage = bestIdx + 1;
+            else startPage = Math.max(1, Math.min(totalP, Math.round(anchorRatio * Math.max(0, totalP - 1)) + 1));
           } else {
-            startPage = Math.max(1, Math.min(totalP, window.__readerState.page || 1));
+            startPage = Math.max(1, Math.min(totalP, Math.round(anchorRatio * Math.max(0, totalP - 1)) + 1));
           }
-
-          root.innerHTML =
-            '<div class="rs-book-stage" id="rsStage">' +
-              '<div id="rsZoomContainer">' +
-                '<div id="rsHtmlBook"></div>' +
-              '</div>' +
-              '<div class="rs-zoom-pill" id="rsZoomPill" onclick="resetZoom()">Fit (100%) ✕</div>' +
-            '</div>';
-
-          const book = document.getElementById('rsHtmlBook');
-          pages.forEach((pageHtml, idx) => {
-            const leaf = document.createElement('div');
-            leaf.className = 'md-page-leaf';
-            leaf.dataset.density = 'soft';
-
-            const content = document.createElement('div');
-            content.className = 'md-page-content';
-            content.innerHTML = pageHtml;
-
-            const footer = document.createElement('div');
-            footer.className = 'md-page-footer';
-            footer.textContent = (idx + 1) + ' / ' + totalP;
-
-            leaf.appendChild(content);
-            leaf.appendChild(footer);
-            book.appendChild(leaf);
-          });
-
-          const pageFlip = new PageFlipCtor(book, {
-            width: targetW,
-            height: targetH,
-            size: 'fixed',
-            autoSize: false,
-            startPage: startPage - 1,
-            showCover: false,
-            usePortrait: true,
-            flippingTime: 400,
-            drawShadow: true,
-            maxShadowOpacity: 0.45,
-            showPageCorners: true,
-            useMouseEvents: true,
-            swipeDistance: 25,
-            mobileScrollSupport: false
-          });
-          book.style.width = targetW + 'px';
-          book.style.height = targetH + 'px';
-          const stfWrapper = book.querySelector('.stf__wrapper');
-          if (stfWrapper) {
-            stfWrapper.style.width = targetW + 'px';
-            stfWrapper.style.height = targetH + 'px';
-            stfWrapper.style.paddingBottom = '0px';
-          }
-
-          pageFlip.loadFromHTML(book.querySelectorAll('.md-page-leaf'));
-          window.__pageFlip = pageFlip;
-
-          pageFlip.on('flip', (e) => {
-            window.__readerState.lastFlipTime = Date.now();
-            const p = e.data + 1;
-            playPaperTurnSound();
-            updateScrubber(p, totalP);
-            showScrubberBriefly();
-          });
-
-          attachZoomAndPanHandlers(document.getElementById('rsStage'), pageFlip);
-
-          window.rsNextPage = () => {
-            if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
-            pageFlip.flipNext();
-            showScrubberBriefly();
-          };
-          window.rsPrevPage = () => {
-            if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
-            pageFlip.flipPrev();
-            showScrubberBriefly();
-          };
-          window.rsGoToPage = (p) => {
-            pageFlip.turnToPage(Math.max(0, Math.min(totalP - 1, p - 1)));
-            showScrubberBriefly();
-          };
-
-          updateScrubber(startPage, totalP);
-          return;
+        } else if (opts.fromMode === 'scroll') {
+          startPage = Math.max(1, Math.min(totalP, Math.round(prevScrollRatio * Math.max(0, totalP - 1)) + 1));
+        } else if (!window.__readerState.initialPageApplied) {
+          startPage = Math.max(1, Math.min(totalP, window.__readerState.initialPage || 1));
+          window.__readerState.initialPageApplied = true;
+        } else {
+          startPage = Math.max(1, Math.min(totalP, window.__readerState.page || 1));
         }
+
+        root.innerHTML =
+          '<div class="rs-book-stage" id="rsStage">' +
+            '<div id="rsZoomContainer">' +
+              '<div id="rsHtmlBook"></div>' +
+            '</div>' +
+            '<div class="rs-zoom-pill" id="rsZoomPill" onclick="resetZoom()">Fit (100%) ✕</div>' +
+          '</div>';
+
+        const book = document.getElementById('rsHtmlBook');
+        const leafEls = [];
+        const frag = document.createDocumentFragment();
+        pages.forEach((pageHtml, idx) => {
+          const leaf = document.createElement('div');
+          leaf.className = 'md-page-leaf';
+          leaf.style.display = idx === startPage - 1 ? 'flex' : 'none';
+
+          const content = document.createElement('div');
+          content.className = 'md-page-content';
+          content.innerHTML = pageHtml;
+
+          const footer = document.createElement('div');
+          footer.className = 'md-page-footer';
+          footer.textContent = (idx + 1) + ' / ' + totalP;
+
+          leaf.appendChild(content);
+          leaf.appendChild(footer);
+          frag.appendChild(leaf);
+          leafEls.push(leaf);
+        });
+        book.appendChild(frag);
+
+        const pageFlip = createRsBookCurl(book, leafEls, {
+          width: targetW,
+          height: targetH,
+          startPage: startPage - 1,
+          flippingTime: 320,
+        });
+        window.__pageFlip = pageFlip;
+
+        pageFlip.on('flip', (e) => {
+          window.__readerState.lastFlipTime = Date.now();
+          const p = e.data + 1;
+          playPaperTurnSound();
+          updateScrubber(p, totalP);
+          showScrubberBriefly();
+        });
+
+        attachZoomAndPanHandlers(document.getElementById('rsStage'), pageFlip);
+
+        window.rsNextPage = () => {
+          if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
+          pageFlip.flipNext();
+          showScrubberBriefly();
+        };
+        window.rsPrevPage = () => {
+          if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
+          pageFlip.flipPrev();
+          showScrubberBriefly();
+        };
+        window.rsGoToPage = (p) => {
+          pageFlip.turnToPage(Math.max(0, Math.min(totalP - 1, p - 1)));
+          showScrubberBriefly();
+        };
+
+        updateScrubber(startPage, totalP);
+        return;
       }
 
       // Continuous Scroll Mode
@@ -1946,19 +2358,26 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
           let pdf = window.__rsPdf;
           if (!pdf) {
             const pdfBytes = base64ToUint8Array(docBase64);
+            let workerCode = '';
+            if (pdfWorkerB64) {
+              try { workerCode = atob(pdfWorkerB64); } catch (e) {}
+            }
             try {
-              if (navigator.onLine) {
-                pdfLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+              if (workerCode && typeof Blob !== 'undefined' && typeof URL !== 'undefined' && URL.createObjectURL) {
+                const blobUrl = URL.createObjectURL(new Blob([workerCode], { type: 'text/javascript' }));
+                pdfLib.GlobalWorkerOptions.workerSrc = blobUrl;
+                pdf = await pdfLib.getDocument({
+                  data: pdfBytes,
+                  isEvalSupported: false,
+                }).promise;
               } else {
-                pdfLib.GlobalWorkerOptions.workerSrc = '';
+                throw new Error('No Blob URL');
               }
-              pdf = await pdfLib.getDocument({
-                data: pdfBytes,
-                disableWorker: !navigator.onLine,
-                isEvalSupported: false,
-              }).promise;
             } catch (workerErr) {
-              pdfLib.GlobalWorkerOptions.workerSrc = '';
+              if (workerCode && !window.pdfjsWorker) {
+                try { (0, eval)(workerCode); } catch (e) {}
+              }
+              pdfLib.GlobalWorkerOptions.workerSrc = 'data:text/javascript,';
               pdf = await pdfLib.getDocument({
                 data: base64ToUint8Array(docBase64),
                 disableWorker: true,
@@ -1970,178 +2389,169 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
           const totalPages = pdf.numPages;
 
           if (mode === 'curl') {
-            const PageFlipCtor = window.St?.PageFlip;
-            if (PageFlipCtor) {
-              root.innerHTML =
-                '<div class="rs-book-stage" id="rsStage">' +
-                  '<div id="rsZoomContainer">' +
-                    '<div id="rsBook"></div>' +
-                  '</div>' +
-                  '<div class="rs-zoom-pill" id="rsZoomPill" onclick="resetZoom()">Fit (100%) ✕</div>' +
-                '</div>';
+            root.innerHTML =
+              '<div class="rs-book-stage" id="rsStage">' +
+                '<div id="rsZoomContainer">' +
+                  '<div id="rsBook"></div>' +
+                '</div>' +
+                '<div class="rs-zoom-pill" id="rsZoomPill" onclick="resetZoom()">Fit (100%) ✕</div>' +
+              '</div>';
 
-              const book = document.getElementById('rsBook');
-              const p1 = await pdf.getPage(1);
-              const vp1 = p1.getViewport({ scale: 1 });
-              const aspect = vp1.height / vp1.width;
+            const book = document.getElementById('rsBook');
+            const p1 = await pdf.getPage(1);
+            const vp1 = p1.getViewport({ scale: 1 });
+            const aspect = vp1.height / vp1.width;
 
-              const winW = window.innerWidth;
-              const winH = window.innerHeight;
-              let targetW = winW;
-              let targetH = Math.round(targetW * aspect);
-              if (targetH > winH) {
-                targetH = winH;
-                targetW = Math.round(targetH / aspect);
-              }
-              targetW = Math.max(200, targetW);
-              targetH = Math.max(240, targetH);
+            const winW = window.innerWidth;
+            const winH = window.innerHeight;
+            let targetW = winW;
+            let targetH = Math.round(targetW * aspect);
+            if (targetH > winH) {
+              targetH = winH;
+              targetW = Math.round(targetH / aspect);
+            }
+            targetW = Math.max(200, targetW);
+            targetH = Math.max(240, targetH);
 
+            const wrapEls = [];
+            const frag = document.createDocumentFragment();
+            for (let i = 1; i <= totalPages; i++) {
+              const wrap = document.createElement('div');
+              wrap.className = 'page-canvas-wrap';
+              wrap.style.display = 'none';
+
+              const canvasHost = document.createElement('div');
+              canvasHost.className = 'rs-canvas-host';
+              canvasHost.id = 'rsPdfCanvasHost_' + i;
+              canvasHost.style.width = '100%';
+              canvasHost.style.height = '100%';
+              canvasHost.innerHTML = '<div style="color:var(--muted); font-size:12px;">Rendering…</div>';
+
+              wrap.appendChild(canvasHost);
+              frag.appendChild(wrap);
+              wrapEls.push(wrap);
+            }
+            book.appendChild(frag);
+
+            const dpr = Math.min(Math.max(window.devicePixelRatio || 1.5, 1.5), 2);
+
+            function evictDistantCanvases(centerPage) {
               for (let i = 1; i <= totalPages; i++) {
-                const wrap = document.createElement('div');
-                wrap.className = 'page-canvas-wrap';
-                wrap.dataset.density = 'soft';
-
-                const canvasHost = document.createElement('div');
-                canvasHost.className = 'rs-canvas-host';
-                canvasHost.id = 'rsPdfCanvasHost_' + i;
-                canvasHost.style.width = '100%';
-                canvasHost.style.height = '100%';
-                canvasHost.innerHTML = '<div style="color:var(--muted); font-size:12px;">Rendering…</div>';
-
-                wrap.appendChild(canvasHost);
-                book.appendChild(wrap);
-              }
-
-              const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
-
-              function evictDistantCanvases(centerPage) {
-                for (let i = 1; i <= totalPages; i++) {
-                  if (Math.abs(i - centerPage) <= 4) continue;
-                  const host = document.getElementById('rsPdfCanvasHost_' + i);
-                  if (host && host.dataset.rendered === 'true') {
-                    delete host.dataset.rendered;
-                    host.innerHTML = '<div style="color:var(--muted); font-size:12px;">Rendering…</div>';
-                  }
-                }
-              }
-
-              async function renderPageCanvas(pNum) {
-                if (pNum < 1 || pNum > totalPages) return;
-                const host = document.getElementById('rsPdfCanvasHost_' + pNum);
-                if (!host || host.dataset.rendered === 'true' || host.dataset.rendered === 'loading') return;
-                host.dataset.rendered = 'loading';
-                try {
-                  const page = await pdf.getPage(pNum);
-                  const vpPage1 = page.getViewport({ scale: 1 });
-                  const pageScale = Math.min(targetW / vpPage1.width, targetH / vpPage1.height) * dpr;
-                  const vp = page.getViewport({ scale: pageScale });
-                  const canvas = document.createElement('canvas');
-                  canvas.width = Math.round(vp.width);
-                  canvas.height = Math.round(vp.height);
-                  canvas.style.width = '100%';
-                  canvas.style.height = '100%';
-                  canvas.style.objectFit = 'contain';
-                  canvas.style.display = 'block';
-                  const ctx = canvas.getContext('2d', { alpha: false });
-                  if (ctx) {
-                    ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = 'high';
-                  }
-                  await page.render({ canvasContext: ctx, viewport: vp }).promise;
-                  try { page.cleanup(); } catch (e) {}
-                  host.innerHTML = '';
-                  host.appendChild(canvas);
-                  host.dataset.rendered = 'true';
-                } catch (err) {
+                if (Math.abs(i - centerPage) <= 4) continue;
+                const host = document.getElementById('rsPdfCanvasHost_' + i);
+                if (host && host.dataset.rendered === 'true') {
                   delete host.dataset.rendered;
-                  console.warn('pdf render err', err);
+                  host.innerHTML = '<div style="color:var(--muted); font-size:12px;">Rendering…</div>';
                 }
               }
+            }
 
-              const startPage = !window.__readerState.initialPageApplied
-                ? Math.max(1, Math.min(totalPages, window.__readerState.initialPage || 1))
-                : Math.max(1, Math.min(totalPages, window.__readerState.page || 1));
-              window.__readerState.initialPageApplied = true;
+            async function renderPageCanvas(pNum) {
+              if (pNum < 1 || pNum > totalPages) return;
+              const host = document.getElementById('rsPdfCanvasHost_' + pNum);
+              if (!host || host.dataset.rendered === 'true' || host.dataset.rendered === 'loading') return;
+              host.dataset.rendered = 'loading';
+              try {
+                const page = await pdf.getPage(pNum);
+                const vpPage1 = page.getViewport({ scale: 1 });
+                const pageScale = Math.min(targetW / vpPage1.width, targetH / vpPage1.height) * dpr;
+                const vp = page.getViewport({ scale: pageScale });
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(vp.width);
+                canvas.height = Math.round(vp.height);
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                canvas.style.objectFit = 'contain';
+                canvas.style.display = 'block';
+                const ctx = canvas.getContext('2d', { alpha: false });
+                if (ctx) {
+                  ctx.imageSmoothingEnabled = true;
+                  ctx.imageSmoothingQuality = 'high';
+                }
+                await page.render({ canvasContext: ctx, viewport: vp }).promise;
+                try { page.cleanup(); } catch (e) {}
+                host.innerHTML = '';
+                host.appendChild(canvas);
+                host.dataset.rendered = 'true';
+              } catch (err) {
+                delete host.dataset.rendered;
+                console.warn('pdf render err', err);
+              }
+            }
 
-              await renderPageCanvas(startPage);
+            const startPage = !window.__readerState.initialPageApplied
+              ? Math.max(1, Math.min(totalPages, window.__readerState.initialPage || 1))
+              : Math.max(1, Math.min(totalPages, window.__readerState.page || 1));
+            window.__readerState.initialPageApplied = true;
+
+            await renderPageCanvas(startPage);
+
+            const pageFlip = createRsBookCurl(book, wrapEls, {
+              width: targetW,
+              height: targetH,
+              startPage: startPage - 1,
+              flippingTime: 340,
+              onBeforeFlip: (toIdx) => {
+                void renderPageCanvas(toIdx + 1);
+              },
+            });
+            window.__pageFlip = pageFlip;
+
+            // Pre-render neighbors after initial paint so Page 1 appears immediately
+            let prefetchTimer = setTimeout(() => {
               if (startPage + 1 <= totalPages) void renderPageCanvas(startPage + 1);
               if (startPage - 1 >= 1) void renderPageCanvas(startPage - 1);
+            }, 60);
 
-              const pageFlip = new PageFlipCtor(book, {
-                width: targetW,
-                height: targetH,
-                size: 'fixed',
-                autoSize: false,
-                startPage: startPage - 1,
-                showCover: false,
-                usePortrait: true,
-                flippingTime: 480,
-                drawShadow: true,
-                maxShadowOpacity: 0.5,
-                showPageCorners: true,
-                useMouseEvents: true,
-                swipeDistance: 25,
-                mobileScrollSupport: false
-              });
-              book.style.width = targetW + 'px';
-              book.style.height = targetH + 'px';
-              const stfWrapper = book.querySelector('.stf__wrapper');
-              if (stfWrapper) {
-                stfWrapper.style.width = targetW + 'px';
-                stfWrapper.style.height = targetH + 'px';
-                stfWrapper.style.paddingBottom = '0px';
-              }
-
-              pageFlip.loadFromHTML(book.querySelectorAll('.page-canvas-wrap'));
-              window.__pageFlip = pageFlip;
-
-              pageFlip.on('flip', (e) => {
-                window.__readerState.lastFlipTime = Date.now();
-                const p = e.data + 1;
-                playPaperTurnSound();
-                updateScrubber(p, totalPages);
-                showScrubberBriefly();
-                evictDistantCanvases(p);
-                void renderPageCanvas(p);
+            pageFlip.on('flip', (e) => {
+              window.__readerState.lastFlipTime = Date.now();
+              const p = e.data + 1;
+              playPaperTurnSound();
+              updateScrubber(p, totalPages);
+              showScrubberBriefly();
+              evictDistantCanvases(p);
+              clearTimeout(prefetchTimer);
+              void renderPageCanvas(p);
+              prefetchTimer = setTimeout(() => {
+                if (pageFlip.getState() !== 'read') return;
                 if (p + 1 <= totalPages) void renderPageCanvas(p + 1);
                 if (p - 1 >= 1) void renderPageCanvas(p - 1);
-              });
+              }, 45);
+            });
 
-              pageFlip.on('changeState', (e) => {
-                if (e.data === 'folding' || e.data === 'flipping') {
-                  const curIdx = pageFlip.getCurrentPageIndex();
-                  void renderPageCanvas(curIdx + 1);
-                  void renderPageCanvas(curIdx + 2);
-                }
-              });
+            attachZoomAndPanHandlers(document.getElementById('rsStage'), pageFlip);
 
-              attachZoomAndPanHandlers(document.getElementById('rsStage'), pageFlip);
-
-              window.rsNextPage = () => {
-                if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
-                pageFlip.flipNext();
-                showScrubberBriefly();
-              };
-              window.rsPrevPage = () => {
-                if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
-                pageFlip.flipPrev();
-                showScrubberBriefly();
-              };
-              let goToSeq = 0;
-              window.rsGoToPage = async (p) => {
-                const seq = ++goToSeq;
-                const target = Math.max(1, Math.min(totalPages, p));
-                evictDistantCanvases(target);
-                await renderPageCanvas(target);
-                if (seq !== goToSeq) return;
+            window.rsNextPage = async () => {
+              if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
+              const nextP = Math.min(totalPages, pageFlip.getCurrentPageIndex() + 2);
+              await renderPageCanvas(nextP);
+              pageFlip.flipNext();
+              showScrubberBriefly();
+            };
+            window.rsPrevPage = async () => {
+              if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
+              const prevP = Math.max(1, pageFlip.getCurrentPageIndex());
+              await renderPageCanvas(prevP);
+              pageFlip.flipPrev();
+              showScrubberBriefly();
+            };
+            let goToSeq = 0;
+            window.rsGoToPage = async (p) => {
+              const seq = ++goToSeq;
+              const target = Math.max(1, Math.min(totalPages, p));
+              evictDistantCanvases(target);
+              await renderPageCanvas(target);
+              if (seq !== goToSeq) return;
+              pageFlip.turnToPage(target - 1);
+              showScrubberBriefly();
+              clearTimeout(prefetchTimer);
+              prefetchTimer = setTimeout(() => {
                 if (target + 1 <= totalPages) void renderPageCanvas(target + 1);
                 if (target - 1 >= 1) void renderPageCanvas(target - 1);
-                pageFlip.turnToPage(target - 1);
-                showScrubberBriefly();
-              };
+              }, 60);
+            };
 
-              updateScrubber(startPage, totalPages);
-            }
+            updateScrubber(startPage, totalPages);
           } else {
             // Continuous Vertical Scroll Mode (Original Proven PDF Engine)
             root.innerHTML = '<div class="pdf-container" id="pdfRoot"></div>';
@@ -2644,6 +3054,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
             window.__readerState.nightLight = s.nightLight;
             const overlay = document.getElementById('rsNightLightOverlay');
             if (overlay) {
+              overlay.style.display = s.nightLight > 0 ? 'block' : 'none';
               overlay.style.backgroundColor = 'rgba(255, 150, 10, ' + ((s.nightLight / 100) * 0.42) + ')';
             }
           }

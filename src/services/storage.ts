@@ -98,7 +98,11 @@ export const Storage = {
       next = [doc, ...docs];
     }
     memoryDocsCache = next;
-    await persistDocsList(next);
+    if (saveDocsDebounceTimer) clearTimeout(saveDocsDebounceTimer);
+    saveDocsDebounceTimer = setTimeout(() => {
+      saveDocsDebounceTimer = null;
+      void persistDocsList(next);
+    }, 250);
   },
 
   async removeDoc(id: string): Promise<void> {

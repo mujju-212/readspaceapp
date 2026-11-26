@@ -144,9 +144,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
       const picked = await pickDocuments();
       if (picked.length > 0) {
         for (const d of picked) {
-          await Storage.saveDoc(d);
+          void Storage.saveDoc(d);
         }
-        await loadData();
         navigation.navigate('Reader', { doc: picked[0], workspace: activeWorkspace || undefined });
       }
     } catch (e: any) {
