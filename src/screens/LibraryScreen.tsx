@@ -95,11 +95,10 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
 
   const loadData = async (folderId?: string, force = false) => {
     const targetFolder = folderId || driveFolderId;
-    const [localDocs, links, wsList, status, bms] = await Promise.all([
+    const [localDocs, links, wsList, bms] = await Promise.all([
       Storage.getDocs(),
       Storage.getSavedLinks(),
       Storage.getWorkspaces(),
-      Api.getDriveStatus(),
       Storage.getBookmarks(),
     ]);
     setDocs(localDocs);
@@ -110,11 +109,14 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({ navigation, route,
       setActiveWorkspace(wsList[0]);
     }
 
-    setDriveConnected(status.connected);
-    if (status.connected && (tab === 'drive' || folderId)) {
-      const files = await Api.listDriveFiles(targetFolder, force);
-      setDriveFiles(files);
-    }
+    // Check Drive status asynchronously so network latency/offline never blocks local files
+    void Api.getDriveStatus().then(async (status) => {
+      setDriveConnected(status.connected);
+      if (status.connected && (tab === 'drive' || folderId)) {
+        const files = await Api.listDriveFiles(targetFolder, force);
+        setDriveFiles(files);
+      }
+    }).catch(() => {});
   };
 
   const sessionVersion = useSessionVersion();

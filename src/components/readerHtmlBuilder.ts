@@ -5,6 +5,7 @@ import {
   OFFLINE_JSZIP_B64,
   OFFLINE_MAMMOTH_B64,
   OFFLINE_PDFJS_B64,
+  OFFLINE_PAGEFLIP_B64,
   OFFLINE_KATEX_B64,
   OFFLINE_KATEX_CSS,
 } from '../vendor/offlineVendors';
@@ -26,21 +27,23 @@ function docNeedsKatex(doc: MobileDoc): boolean {
 function getRequiredVendorBundles(doc: MobileDoc, includeKatex: boolean): string[] {
   switch (doc.kind) {
     case 'pdf':
-      return [OFFLINE_PDFJS_B64];
+      return [OFFLINE_PDFJS_B64, OFFLINE_PAGEFLIP_B64];
     case 'markdown':
       return includeKatex
-        ? [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64]
-        : [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64];
+        ? [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64]
+        : [OFFLINE_MARKED_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
     case 'docx':
       return includeKatex
-        ? [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64]
-        : [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64];
+        ? [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64]
+        : [OFFLINE_JSZIP_B64, OFFLINE_MAMMOTH_B64, OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
     case 'pptx':
-      return [OFFLINE_JSZIP_B64];
+      return [OFFLINE_JSZIP_B64, OFFLINE_PAGEFLIP_B64];
     case 'html':
-      return includeKatex ? [OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64] : [OFFLINE_DOMPURIFY_B64];
+      return includeKatex
+        ? [OFFLINE_DOMPURIFY_B64, OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64]
+        : [OFFLINE_DOMPURIFY_B64, OFFLINE_PAGEFLIP_B64];
     default:
-      return includeKatex ? [OFFLINE_KATEX_B64] : [];
+      return includeKatex ? [OFFLINE_KATEX_B64, OFFLINE_PAGEFLIP_B64] : [OFFLINE_PAGEFLIP_B64];
   }
 }
 
@@ -62,20 +65,25 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
   (function() {
     function loadBundle(b64) {
       if (!b64) return;
+      var code = '';
       try {
         var bin = atob(b64);
-        var code = bin;
-        if (/[^\\x00-\\x7f]/.test(bin) && typeof TextDecoder !== 'undefined') {
-          var bytes = new Uint8Array(bin.length);
-          for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-          code = new TextDecoder('utf-8').decode(bytes);
+        code = bin;
+        if (/[^\\x00-\\x7f]/.test(bin)) {
+          if (typeof TextDecoder !== 'undefined') {
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            code = new TextDecoder('utf-8').decode(bytes);
+          } else {
+            code = decodeURIComponent(escape(bin));
+          }
         }
         var s = document.createElement('script');
         s.textContent = code;
         document.head.appendChild(s);
       } catch(e) {
         try {
-          (0, eval)(atob(b64));
+          (0, eval)(code || decodeURIComponent(escape(atob(b64))));
         } catch(e2) {
           console.warn('Bundle load error:', e2);
         }
@@ -192,74 +200,13 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       position: relative;
       border: none;
       box-shadow: none;
-      perspective: 2400px;
-      transform-style: preserve-3d;
       overflow: visible;
     }
-    .rs-book-spine {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: 0;
-      width: 24px;
-      pointer-events: none;
-      background: linear-gradient(to right, rgba(0,0,0,0.16) 0%, rgba(0,0,0,0.05) 45%, transparent 100%);
-      z-index: 25;
-    }
-    .rs-under-shadow {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background: linear-gradient(to right, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.08) 35%, transparent 75%);
-      z-index: 22;
-      opacity: 0.45;
-      transition: opacity 0.32s ease;
-    }
-    .rs-curl-leaf {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      transform-origin: left center;
-      transform-style: preserve-3d;
-      z-index: 30;
-      pointer-events: none;
-      will-change: transform;
-    }
-    .rs-leaf-front, .rs-leaf-back {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: var(--bg);
-      backface-visibility: hidden;
-      -webkit-backface-visibility: hidden;
-    }
-    .rs-leaf-front { z-index: 2; }
-    .rs-leaf-back {
-      z-index: 1;
-      transform: rotateY(180deg);
-      background: var(--panel);
-    }
-    .rs-leaf-back-inner {
-      width: 100%;
-      height: 100%;
-      transform: scaleX(-1);
-      opacity: 0.22;
-      pointer-events: none;
-    }
-    .rs-curl-lighting {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background: linear-gradient(to right, rgba(0,0,0,0.18) 0%, rgba(255,255,255,0.22) 45%, rgba(0,0,0,0.22) 100%);
-      opacity: 0.35;
-      z-index: 5;
+    .stf__parent, .stf__wrapper, .stf__block {
+      touch-action: pan-y;
+      -webkit-touch-action: pan-y;
     }
     .page-canvas-wrap {
-      position: absolute;
-      inset: 0;
       width: 100%;
       height: 100%;
       background: var(--bg);
@@ -267,6 +214,8 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       align-items: center;
       justify-content: center;
       overflow: hidden;
+      touch-action: none;
+      -webkit-touch-action: none;
     }
     .page-canvas-wrap canvas {
       width: 100%;
@@ -275,8 +224,6 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       display: block;
     }
     .md-page-leaf {
-      position: absolute;
-      inset: 0;
       width: 100%;
       height: 100%;
       background: var(--bg);
@@ -285,6 +232,10 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       box-sizing: border-box;
       overflow: hidden;
       border: none;
+    }
+    .md-page-inner {
+      width: 100%;
+      height: 100%;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -310,6 +261,10 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
     .md-page-content p { margin: 0.35em 0 0.55em; line-height: inherit; }
     .md-page-content ul, .md-page-content ol { padding-left: 26px; margin: 0.35em 0 0.55em; }
     .md-page-content li { margin-bottom: 0.25em; line-height: inherit; }
+    .md-page-content li:has(> input[type="checkbox"]),
+    .reader-body li:has(> input[type="checkbox"]) { list-style: none; margin-left: -18px; }
+    .md-page-content input[type="checkbox"],
+    .reader-body input[type="checkbox"] { margin-right: 6px; accent-color: var(--accent); }
     .md-page-content blockquote {
       margin: 0.5em 0;
       padding: 6px 12px;
@@ -350,9 +305,10 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       border: 1px solid var(--border);
       padding: 5px 7px;
       text-align: left;
-      word-break: break-word;
+      word-break: normal;
+      overflow-wrap: break-word;
     }
-    .md-page-content th { background: var(--panel); font-weight: 600; }
+    .md-page-content th { background: var(--panel); font-weight: 600; white-space: nowrap; }
     .md-page-content [data-rs-reopened="true"] {
       margin-top: 0 !important;
       padding-top: 0 !important;
@@ -817,10 +773,11 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
   <script>
     const docKind = ${JSON.stringify(doc.kind || 'text')};
     const docName = ${JSON.stringify(doc.name || 'Document')};
-    const docBase64 = ${JSON.stringify(doc.base64Data || '')};
+    const docMime = ${JSON.stringify(doc.mime || '')};
+    let docBase64 = ${JSON.stringify(doc.base64Data || '')};
     const docUri = ${JSON.stringify(doc.uri || '')};
     const docStreamUrl = ${JSON.stringify((doc as any).streamUrl || '')};
-    const pdfWorkerB64 = ${doc.kind === 'pdf' ? JSON.stringify(OFFLINE_PDFJS_WORKER_B64) : '""'};
+    let pdfWorkerB64 = ${doc.kind === 'pdf' ? JSON.stringify(OFFLINE_PDFJS_WORKER_B64) : '""'};
 
     window.__readerState = {
       mode: ${JSON.stringify(settings.readingMode || 'scroll')},
@@ -1757,387 +1714,316 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
       return pages.length > 0 ? pages : [rawHtml];
     }
 
-    function createRsBookCurl(bookEl, items, opts) {
-      opts = opts || {};
-      const total = items.length;
-      let curIdx = Math.max(0, Math.min(total - 1, opts.startPage || 0));
-      let state = 'read'; // 'read' | 'user_fold' | 'flipping'
-      const listeners = new Map();
-      let activeLeaf = null;
-      let activeShadow = null;
-      let animTimer = null;
-      let destroyed = false;
-
-      const width = Math.max(200, opts.width || bookEl.clientWidth || window.innerWidth);
-      const height = Math.max(240, opts.height || bookEl.clientHeight || window.innerHeight);
-      const flipMs = opts.flippingTime || 320;
-
-      bookEl.style.width = width + 'px';
-      bookEl.style.height = height + 'px';
-
-      const spine = document.createElement('div');
-      spine.className = 'rs-book-spine';
-      bookEl.appendChild(spine);
-
-      function emit(ev, data) {
-        const arr = listeners.get(ev);
-        if (!arr) return;
-        for (let i = 0; i < arr.length; i++) {
-          try { arr[i]({ data: data, object: api }); } catch (e) {}
-        }
-      }
-
-      function setState(next) {
-        if (state !== next) {
-          state = next;
-          emit('changeState', next);
-        }
-      }
-
-      function showOnly(idx) {
-        for (let i = 0; i < total; i++) {
-          items[i].style.display = i === idx ? 'flex' : 'none';
-          items[i].style.zIndex = i === idx ? '10' : '1';
-        }
-      }
-
-      function cloneLeafNode(srcEl, isVerso) {
-        const clone = srcEl.cloneNode(true);
-        clone.style.display = 'flex';
-        clone.style.position = 'relative';
-        clone.style.inset = '0';
-        clone.style.width = '100%';
-        clone.style.height = '100%';
-        const srcCanvases = srcEl.querySelectorAll('canvas');
-        const dstCanvases = clone.querySelectorAll('canvas');
-        for (let i = 0; i < srcCanvases.length && i < dstCanvases.length; i++) {
-          const sc = srcCanvases[i];
-          const dc = dstCanvases[i];
+    function syncCanvasBitmaps(srcEl, dstEl) {
+      if (!srcEl || !dstEl) return;
+      const srcCanvases = srcEl.querySelectorAll('canvas');
+      const dstCanvases = dstEl.querySelectorAll('canvas');
+      for (let ci = 0; ci < srcCanvases.length && ci < dstCanvases.length; ci++) {
+        const sc = srcCanvases[ci];
+        const dc = dstCanvases[ci];
+        if (sc.width > 0 && sc.height > 0) {
           dc.width = sc.width;
           dc.height = sc.height;
           const ctx = dc.getContext('2d');
-          if (ctx && sc.width > 0 && sc.height > 0) {
-            ctx.drawImage(sc, 0, 0);
+          if (ctx) ctx.drawImage(sc, 0, 0);
+        }
+      }
+    }
+
+    function zeroCanvasesIn(el) {
+      if (!el) return;
+      const canvases = el.querySelectorAll('canvas');
+      for (let i = 0; i < canvases.length; i++) {
+        canvases[i].width = 0;
+        canvases[i].height = 0;
+      }
+    }
+
+    function mountOptimizedPageFlip(bookEl, items, opts) {
+      opts = opts || {};
+      const PageFlipCtor = window.St && window.St.PageFlip;
+      if (!PageFlipCtor) return null;
+
+      const targetW = Math.max(200, opts.width || window.innerWidth);
+      const targetH = Math.max(240, opts.height || window.innerHeight);
+      const startPage = Math.max(0, Math.min(items.length - 1, opts.startPage || 0));
+
+      const pageFlip = new PageFlipCtor(bookEl, {
+        width: targetW,
+        height: targetH,
+        size: 'fixed',
+        autoSize: false,
+        startPage: startPage,
+        showCover: false,
+        usePortrait: true,
+        flippingTime: opts.flippingTime || 360,
+        drawShadow: true,
+        maxShadowOpacity: 0.45,
+        showPageCorners: true,
+        useMouseEvents: true,
+        swipeDistance: 25,
+        mobileScrollSupport: false,
+      });
+
+      bookEl.style.width = targetW + 'px';
+      bookEl.style.height = targetH + 'px';
+      const stfWrapper = bookEl.querySelector('.stf__wrapper');
+      if (stfWrapper) {
+        stfWrapper.style.width = targetW + 'px';
+        stfWrapper.style.height = targetH + 'px';
+        stfWrapper.style.paddingBottom = '0px';
+      }
+
+      // Intercept St.PageFlip's infinite 60fps RAF loop during loadFromHTML
+      const origRAF = window.requestAnimationFrame;
+      window.requestAnimationFrame = function() { return 0; };
+      try {
+        pageFlip.loadFromHTML(items);
+      } finally {
+        window.requestAnimationFrame = origRAF;
+      }
+
+      const render = pageFlip.getRender();
+      const pagesCol = pageFlip.getPageCollection();
+      const ui = pageFlip.getUI();
+      const fc = pageFlip.getFlipController();
+
+      // Hide all pages once so O(1) clear() only manages active pages
+      for (let i = 0; i < items.length; i++) {
+        items[i].style.display = 'none';
+      }
+
+      render._destroyed = false;
+      render._rafId = null;
+      render._dirty = true;
+      render._visiblePages = new Set();
+      render._tempCopyOwners = new Set();
+
+      render._schedule = function() {
+        if (this._destroyed || this._rafId !== null) return;
+        this._rafId = window.requestAnimationFrame(() => {
+          this._rafId = null;
+          if (this._destroyed) return;
+          const now = Math.max(performance.now(), this.animation ? this.animation.startedAt : 0);
+          this.render(now);
+          const active =
+            this.animation !== null ||
+            this.flippingPage !== null ||
+            this.bottomPage !== null ||
+            this.shadow !== null ||
+            this._dirty;
+          this._dirty = false;
+          if (active) this._schedule();
+        });
+      };
+
+      // O(1) clear() instead of O(N) loop over every page on every frame
+      render.clear = function() {
+        const keep = new Set();
+        if (this.leftPage) keep.add(this.leftPage);
+        if (this.rightPage) keep.add(this.rightPage);
+        if (this.flippingPage) keep.add(this.flippingPage);
+        if (this.bottomPage) keep.add(this.bottomPage);
+        this._visiblePages.forEach((p) => {
+          if (!keep.has(p)) {
+            p.getElement().style.display = 'none';
           }
-        }
-        if (isVerso) {
-          const wrap = document.createElement('div');
-          wrap.className = 'rs-leaf-back-inner';
-          wrap.appendChild(clone);
-          return wrap;
-        }
-        return clone;
-      }
-
-      function cleanupCurl() {
-        if (animTimer) {
-          clearTimeout(animTimer);
-          animTimer = null;
-        }
-        if (activeLeaf && activeLeaf.parentNode) activeLeaf.parentNode.removeChild(activeLeaf);
-        if (activeShadow && activeShadow.parentNode) activeShadow.parentNode.removeChild(activeShadow);
-        activeLeaf = null;
-        activeShadow = null;
-      }
-
-      function mountCurlPair(fromIdx, toIdx, dir) {
-        cleanupCurl();
-        const frontIdx = dir === 'next' ? fromIdx : toIdx;
-        const baseIdx = dir === 'next' ? toIdx : fromIdx;
-
-        for (let i = 0; i < total; i++) {
-          if (i === baseIdx) {
-            items[i].style.display = 'flex';
-            items[i].style.zIndex = '10';
-          } else {
-            items[i].style.display = 'none';
-            items[i].style.zIndex = '1';
+        });
+        this._tempCopyOwners.forEach((owner) => {
+          if (owner.getTemporaryCopy && owner.getTemporaryCopy() !== this.flippingPage) {
+            owner.hideTemporaryCopy();
           }
-        }
+        });
+        this._visiblePages = keep;
+      };
 
-        const shadow = document.createElement('div');
-        shadow.className = 'rs-under-shadow';
-        bookEl.appendChild(shadow);
-        activeShadow = shadow;
+      // Sync render.timer before startAnimation so idle pauses never skip frames
+      const origStartAnim = render.startAnimation.bind(render);
+      render.startAnimation = function(frames, duration, onEnd) {
+        this.timer = performance.now();
+        origStartAnim(frames, duration, onEnd);
+        this._dirty = true;
+        this._schedule();
+      };
 
-        const leaf = document.createElement('div');
-        leaf.className = 'rs-curl-leaf';
-
-        const front = document.createElement('div');
-        front.className = 'rs-leaf-front';
-        front.appendChild(cloneLeafNode(items[frontIdx], false));
-        const light = document.createElement('div');
-        light.className = 'rs-curl-lighting';
-        front.appendChild(light);
-
-        const back = document.createElement('div');
-        back.className = 'rs-leaf-back';
-        back.appendChild(cloneLeafNode(items[frontIdx], true));
-
-        leaf.appendChild(front);
-        leaf.appendChild(back);
-        bookEl.appendChild(leaf);
-        activeLeaf = leaf;
-        return { leaf, shadow, light };
-      }
-
-      function finishFlip(targetIdx) {
-        cleanupCurl();
-        curIdx = targetIdx;
-        showOnly(curIdx);
-        setState('read');
-        emit('flip', curIdx);
-      }
-
-      function animateFlip(dir, fromIdx, toIdx, startProgress) {
-        if (destroyed) return;
-        setState('flipping');
-        const pair = activeLeaf ? { leaf: activeLeaf, shadow: activeShadow } : mountCurlPair(fromIdx, toIdx, dir);
-        const leaf = pair.leaf;
-        const shadow = pair.shadow;
-
-        if (startProgress === undefined) {
-          const initAngle = dir === 'next' ? 0 : -180;
-          leaf.style.transition = 'none';
-          leaf.style.transform = 'rotateY(' + initAngle + 'deg) translateZ(0px)';
-          if (shadow) shadow.style.opacity = dir === 'next' ? '0.45' : '0.05';
-          void leaf.offsetWidth;
-        }
-
-        const endAngle = dir === 'next' ? -180 : 0;
-        leaf.style.transition = 'transform ' + flipMs + 'ms cubic-bezier(0.22, 1, 0.36, 1)';
-        leaf.style.transform = 'rotateY(' + endAngle + 'deg) translateZ(0px)';
-        if (shadow) {
-          shadow.style.transition = 'opacity ' + flipMs + 'ms ease';
-          shadow.style.opacity = dir === 'next' ? '0' : '0.45';
-        }
-
-        animTimer = setTimeout(() => {
-          finishFlip(toIdx);
-        }, flipMs + 20);
-      }
-
-      function snapBack(dir, fromIdx) {
-        if (!activeLeaf) {
-          showOnly(fromIdx);
-          setState('read');
-          return;
-        }
-        setState('flipping');
-        const backAngle = dir === 'next' ? 0 : -180;
-        activeLeaf.style.transition = 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)';
-        activeLeaf.style.transform = 'rotateY(' + backAngle + 'deg) translateZ(0px)';
-        animTimer = setTimeout(() => {
-          finishFlip(fromIdx);
-        }, 215);
-      }
-
-      // Interactive touch drag + edge tap
-      let drag = null;
-      function onTouchStart(e) {
-        if (destroyed || state === 'flipping') return;
-        if (!e.touches || e.touches.length !== 1 || window.__readerState.currentZoom > 1.05) {
-          if (state === 'user_fold' && drag) {
-            snapBack(drag.dir, curIdx);
-          }
-          drag = null;
-          return;
-        }
-        drag = {
-          x: e.touches[0].clientX,
-          y: e.touches[0].clientY,
-          time: Date.now(),
-          folding: false,
-          dir: null,
-          toIdx: curIdx,
-          progress: 0,
+      for (const m of ['finishAnimation', 'update', 'setFlippingPage', 'setBottomPage', 'setShadowData', 'clearShadow']) {
+        const orig = render[m].bind(render);
+        render[m] = function() {
+          const res = orig.apply(this, arguments);
+          this._dirty = true;
+          this._schedule();
+          return res;
         };
       }
 
-      function onTouchMove(e) {
-        if (!drag || destroyed || state === 'flipping') return;
-        if (!e.touches || e.touches.length !== 1 || window.__readerState.currentZoom > 1.05) {
-          if (drag.folding) snapBack(drag.dir, curIdx);
-          drag = null;
-          return;
-        }
-        const dx = e.touches[0].clientX - drag.x;
-        const dy = e.touches[0].clientY - drag.y;
+      const origShow = pagesCol.show.bind(pagesCol);
+      pagesCol.show = function() {
+        const res = origShow.apply(this, arguments);
+        render._dirty = true;
+        render._schedule();
+        return res;
+      };
 
-        if (!drag.folding) {
-          if (Math.abs(dx) < 10 || Math.abs(dy) > Math.abs(dx) * 0.9) return;
-          const dir = dx < 0 ? 'next' : 'prev';
-          const toIdx = dir === 'next' ? curIdx + 1 : curIdx - 1;
-          if (toIdx < 0 || toIdx >= total) {
-            drag = null;
+      for (const m of ['turnToPage', 'turnToNextPage', 'turnToPrevPage', 'flipNext', 'flipPrev', 'flip', 'startUserTouch', 'userMove', 'userStop', 'updateOrientation']) {
+        const orig = pageFlip[m].bind(pageFlip);
+        pageFlip[m] = function() {
+          const res = orig.apply(this, arguments);
+          render._dirty = true;
+          render._schedule();
+          return res;
+        };
+      }
+
+      // Copy PDF <canvas> bitmaps into St.PageFlip's temporary curl clone & free GPU memory on cleanup
+      const pfPages = pagesCol.getPages();
+      for (let i = 0; i < pfPages.length; i++) {
+        const pObj = pfPages[i];
+        const origNewTemp = pObj.newTemporaryCopy.bind(pObj);
+        const origHideTemp = pObj.hideTemporaryCopy.bind(pObj);
+        pObj.newTemporaryCopy = function() {
+          const hadCopy = this.temporaryCopy !== null;
+          const copy = origNewTemp();
+          if (!hadCopy && copy && this.copiedElement) {
+            render._tempCopyOwners.add(this);
+            syncCanvasBitmaps(this.element, this.copiedElement);
+          }
+          return copy;
+        };
+        pObj.hideTemporaryCopy = function() {
+          if (this.copiedElement) zeroCanvasesIn(this.copiedElement);
+          render._tempCopyOwners.delete(this);
+          origHideTemp();
+        };
+      }
+
+      // Patch UI touch/mouse handlers for 0ms drag curl, 25% drag threshold, fast flick completion, and zoom safety
+      ui.removeHandlers();
+      const origMouseDown = ui.onMouseDown;
+      const origMouseUp = ui.onMouseUp;
+      let mouseStart = null;
+      ui.onMouseDown = function(e) {
+        if (window.__readerState.currentZoom > 1.05) return;
+        mouseStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+        origMouseDown(e);
+      };
+      ui.onMouseUp = function(e) {
+        const ms = mouseStart;
+        mouseStart = null;
+        if (ms && pageFlip.isUserMove) {
+          const dx = e.clientX - ms.x;
+          const dy = e.clientY - ms.y;
+          const dt = Date.now() - ms.time;
+          const calc = fc.getCalculation();
+          const rect = fc.getBoundsRect();
+          const shouldComplete = (Math.abs(dx) > rect.pageWidth * 0.25 || (dt < 300 && Math.abs(dx) > 28)) && Math.abs(dy) < Math.abs(dx) * 1.4;
+          if (shouldComplete && calc && ((dx < 0 && calc.getDirection() === 0) || (dx > 0 && calc.getDirection() === 1))) {
+            const cornerY = calc.getCorner() === 'bottom' ? rect.height : 0;
+            pageFlip.isUserTouch = false;
+            pageFlip.isUserMove = false;
+            fc.animateFlippingTo(calc.getPosition(), { x: -rect.pageWidth, y: cornerY }, true);
             return;
           }
-          drag.folding = true;
-          drag.dir = dir;
-          drag.toIdx = toIdx;
-          setState('user_fold');
-          if (opts.onBeforeFlip) opts.onBeforeFlip(toIdx);
-          mountCurlPair(curIdx, toIdx, dir);
         }
-
-        if (drag.folding && activeLeaf) {
-          e.preventDefault();
-          const rawProg = drag.dir === 'next' ? -dx / width : dx / width;
-          const prog = Math.max(0, Math.min(1, rawProg));
-          drag.progress = prog;
-          const angle = drag.dir === 'next' ? -prog * 180 : -(1 - prog) * 180;
-          const liftZ = Math.sin(prog * Math.PI) * 16;
-          activeLeaf.style.transition = 'none';
-          activeLeaf.style.transform = 'rotateY(' + angle.toFixed(2) + 'deg) translateZ(' + liftZ.toFixed(1) + 'px)';
-          if (activeShadow) {
-            activeShadow.style.transition = 'none';
-            activeShadow.style.opacity = String(drag.dir === 'next' ? (1 - prog) * 0.45 : prog * 0.45);
-          }
-        }
-      }
-
-      function onTouchEnd(e) {
-        if (!drag || destroyed) return;
-        const d = drag;
-        drag = null;
-        if (d.folding) {
-          const dt = Math.max(1, Date.now() - d.time);
-          const tx = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : d.x;
-          const vel = Math.abs(tx - d.x) / dt;
-          if (d.progress > 0.22 || vel > 0.35) {
-            animateFlip(d.dir, curIdx, d.toIdx, d.progress);
-          } else {
-            snapBack(d.dir, curIdx);
-          }
-          return;
-        }
-        if (e.changedTouches && e.changedTouches.length === 1 && window.__readerState.currentZoom <= 1.05) {
-          const tx = e.changedTouches[0].clientX;
-          const ty = e.changedTouches[0].clientY;
-          const moved = Math.hypot(tx - d.x, ty - d.y);
-          const dt = Date.now() - d.time;
-          if (moved < 12 && dt < 350) {
-            const rect = bookEl.getBoundingClientRect();
-            const relX = (tx - rect.left) / Math.max(1, rect.width);
-            if (relX > 0.80) api.flipNext();
-            else if (relX < 0.20) api.flipPrev();
-          }
-        }
-      }
-
-      bookEl.addEventListener('touchstart', onTouchStart, { passive: true });
-      bookEl.addEventListener('touchmove', onTouchMove, { passive: false });
-      bookEl.addEventListener('touchend', onTouchEnd, { passive: true });
-
-      // Mouse drag / edge-click support for desktop & web preview
-      let mouseDrag = null;
-      function onMouseDown(e) {
-        if (destroyed || state === 'flipping' || e.button !== 0 || window.__readerState.currentZoom > 1.05) return;
-        mouseDrag = { x: e.clientX, y: e.clientY, time: Date.now(), folding: false, dir: null, toIdx: curIdx, progress: 0 };
-      }
-      function onMouseMove(e) {
-        if (!mouseDrag || destroyed || state === 'flipping') return;
-        const dx = e.clientX - mouseDrag.x;
-        const dy = e.clientY - mouseDrag.y;
-        if (!mouseDrag.folding) {
-          if (Math.abs(dx) < 12 || Math.abs(dy) > Math.abs(dx) * 0.9) return;
-          const dir = dx < 0 ? 'next' : 'prev';
-          const toIdx = dir === 'next' ? curIdx + 1 : curIdx - 1;
-          if (toIdx < 0 || toIdx >= total) { mouseDrag = null; return; }
-          mouseDrag.folding = true;
-          mouseDrag.dir = dir;
-          mouseDrag.toIdx = toIdx;
-          setState('user_fold');
-          if (opts.onBeforeFlip) opts.onBeforeFlip(toIdx);
-          mountCurlPair(curIdx, toIdx, dir);
-        }
-        if (mouseDrag.folding && activeLeaf) {
-          const rawProg = mouseDrag.dir === 'next' ? -dx / width : dx / width;
-          const prog = Math.max(0, Math.min(1, rawProg));
-          mouseDrag.progress = prog;
-          const angle = mouseDrag.dir === 'next' ? -prog * 180 : -(1 - prog) * 180;
-          const liftZ = Math.sin(prog * Math.PI) * 16;
-          activeLeaf.style.transition = 'none';
-          activeLeaf.style.transform = 'rotateY(' + angle.toFixed(2) + 'deg) translateZ(' + liftZ.toFixed(1) + 'px)';
-        }
-      }
-      function onMouseUp(e) {
-        if (!mouseDrag || destroyed) return;
-        const d = mouseDrag;
-        mouseDrag = null;
-        if (d.folding) {
-          const dt = Math.max(1, Date.now() - d.time);
-          const vel = Math.abs(e.clientX - d.x) / dt;
-          if (d.progress > 0.22 || vel > 0.35) animateFlip(d.dir, curIdx, d.toIdx, d.progress);
-          else snapBack(d.dir, curIdx);
-          return;
-        }
-        const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
-        if (moved < 8 && window.__readerState.currentZoom <= 1.05) {
-          const rect = bookEl.getBoundingClientRect();
-          const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
-          if (relX > 0.80) api.flipNext();
-          else if (relX < 0.20) api.flipPrev();
-        }
-      }
-      bookEl.addEventListener('mousedown', onMouseDown);
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
-
-      showOnly(curIdx);
-
-      const api = {
-        getCurrentPageIndex: () => curIdx,
-        getPageCount: () => total,
-        getState: () => state,
-        on: (ev, cb) => {
-          if (!listeners.has(ev)) listeners.set(ev, []);
-          listeners.get(ev).push(cb);
-          return api;
-        },
-        off: (ev) => listeners.delete(ev),
-        getFlipController: () => ({
-          stopMove: () => {
-            if (state === 'user_fold' && drag) {
-              snapBack(drag.dir, curIdx);
-              drag = null;
-            }
-            if (state === 'user_fold' && mouseDrag) {
-              snapBack(mouseDrag.dir, curIdx);
-              mouseDrag = null;
-            }
-          },
-        }),
-        flipNext: () => {
-          if (destroyed || state !== 'read' || curIdx >= total - 1) return;
-          animateFlip('next', curIdx, curIdx + 1);
-        },
-        flipPrev: () => {
-          if (destroyed || state !== 'read' || curIdx <= 0) return;
-          animateFlip('prev', curIdx, curIdx - 1);
-        },
-        turnToPage: (idx) => {
-          if (destroyed) return;
-          const target = Math.max(0, Math.min(total - 1, idx));
-          cleanupCurl();
-          curIdx = target;
-          showOnly(curIdx);
-          setState('read');
-          emit('flip', curIdx);
-        },
-        destroy: () => {
-          destroyed = true;
-          cleanupCurl();
-          bookEl.removeEventListener('touchstart', onTouchStart);
-          bookEl.removeEventListener('touchmove', onTouchMove);
-          bookEl.removeEventListener('touchend', onTouchEnd);
-          bookEl.removeEventListener('mousedown', onMouseDown);
-          window.removeEventListener('mousemove', onMouseMove);
-          window.removeEventListener('mouseup', onMouseUp);
-          listeners.clear();
-        },
+        origMouseUp(e);
       };
-      return api;
+      ui.onTouchStart = function(t) {
+        if (window.__readerState.currentZoom > 1.05 || !t.changedTouches || t.touches.length > 1) {
+          ui.touchPoint = null;
+          return;
+        }
+        if (ui.checkTarget(t.target) && t.changedTouches.length > 0) {
+          const e = t.changedTouches[0];
+          const pos = ui.getMousePos(e.clientX, e.clientY);
+          ui.touchPoint = {
+            point: pos,
+            time: Date.now(),
+            started: false,
+            clientX: e.clientX,
+            clientY: e.clientY,
+            target: t.target,
+          };
+        }
+      };
+      ui.onTouchMove = function(t) {
+        if (!ui.touchPoint || !t.changedTouches || t.changedTouches.length === 0) return;
+        if (window.__readerState.currentZoom > 1.05 || (t.touches && t.touches.length > 1)) {
+          if (ui.touchPoint.started) {
+            pageFlip.userStop(ui.touchPoint.point, true);
+          }
+          ui.touchPoint = null;
+          return;
+        }
+        const e = t.changedTouches[0];
+        const dx = e.clientX - ui.touchPoint.clientX;
+        const dy = e.clientY - ui.touchPoint.clientY;
+        if (!ui.touchPoint.started) {
+          if (Math.hypot(dx, dy) < 6) return;
+          const scrollHost = ui.touchPoint.target && ui.touchPoint.target.closest ? ui.touchPoint.target.closest('.md-page-content') : null;
+          if (scrollHost && scrollHost.scrollHeight > scrollHost.clientHeight + 2 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+            ui.touchPoint = null;
+            return;
+          }
+          ui.touchPoint.started = true;
+          pageFlip.startUserTouch(ui.touchPoint.point);
+        }
+        if (ui.touchPoint.started) {
+          if (t.cancelable) t.preventDefault();
+          const pos = ui.getMousePos(e.clientX, e.clientY);
+          pageFlip.userMove(pos, true);
+        }
+      };
+      ui.onTouchEnd = function(t) {
+        if (!ui.touchPoint || !t.changedTouches || t.changedTouches.length === 0) return;
+        const tp = ui.touchPoint;
+        ui.touchPoint = null;
+        const e = t.changedTouches[0];
+        const pos = ui.getMousePos(e.clientX, e.clientY);
+        const dx = e.clientX - tp.clientX;
+        const dy = e.clientY - tp.clientY;
+        const dt = Date.now() - tp.time;
+
+        if (tp.started) {
+          const calc = fc.getCalculation();
+          const rect = fc.getBoundsRect();
+          const shouldComplete = (Math.abs(dx) > rect.pageWidth * 0.25 || (dt < 300 && Math.abs(dx) > 28)) && Math.abs(dy) < Math.abs(dx) * 1.4;
+          if (shouldComplete && calc && ((dx < 0 && calc.getDirection() === 0) || (dx > 0 && calc.getDirection() === 1))) {
+            const cornerY = calc.getCorner() === 'bottom' ? rect.height : 0;
+            pageFlip.isUserTouch = false;
+            pageFlip.isUserMove = false;
+            fc.animateFlippingTo(calc.getPosition(), { x: -rect.pageWidth, y: cornerY }, true);
+          } else {
+            pageFlip.userStop(pos, false);
+          }
+          return;
+        }
+
+        if (Math.hypot(dx, dy) < 12 && dt < 350 && window.__readerState.currentZoom <= 1.05) {
+          const rect = ui.getDistElement().getBoundingClientRect();
+          const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
+          const corner = (e.clientY - rect.top) < rect.height / 2 ? 'top' : 'bottom';
+          if (relX > 0.80) pageFlip.flipNext(corner);
+          else if (relX < 0.20) pageFlip.flipPrev(corner);
+        }
+      };
+      ui.setHandlers();
+
+      const origDestroy = pageFlip.destroy.bind(pageFlip);
+      pageFlip.destroy = function() {
+        render._destroyed = true;
+        if (render._rafId !== null) {
+          cancelAnimationFrame(render._rafId);
+          render._rafId = null;
+        }
+        try {
+          for (let i = 0; i < pfPages.length; i++) {
+            pfPages[i].hideTemporaryCopy();
+          }
+        } catch (e) {}
+        origDestroy();
+      };
+
+      render._schedule();
+      return pageFlip;
     }
 
     async function renderHtmlContent(contentHtml, opts) {
@@ -2183,13 +2069,16 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
         probeLeaf.style.width = targetW + 'px';
         probeLeaf.style.height = targetH + 'px';
         probeLeaf.style.visibility = 'hidden';
+        const probeInner = document.createElement('div');
+        probeInner.className = 'md-page-inner';
         const probeContent = document.createElement('div');
         probeContent.className = 'md-page-content';
         const probeFooter = document.createElement('div');
         probeFooter.className = 'md-page-footer';
         probeFooter.textContent = '1 / 1';
-        probeLeaf.appendChild(probeContent);
-        probeLeaf.appendChild(probeFooter);
+        probeInner.appendChild(probeContent);
+        probeInner.appendChild(probeFooter);
+        probeLeaf.appendChild(probeInner);
         document.body.appendChild(probeLeaf);
         const contentWidth = Math.max(220, probeContent.clientWidth || (targetW - 36));
         const availHeight = Math.max(220, probeContent.clientHeight || (targetH - 76));
@@ -2244,7 +2133,10 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
         pages.forEach((pageHtml, idx) => {
           const leaf = document.createElement('div');
           leaf.className = 'md-page-leaf';
-          leaf.style.display = idx === startPage - 1 ? 'flex' : 'none';
+          leaf.dataset.density = 'soft';
+
+          const inner = document.createElement('div');
+          inner.className = 'md-page-inner';
 
           const content = document.createElement('div');
           content.className = 'md-page-content';
@@ -2254,45 +2146,48 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
           footer.className = 'md-page-footer';
           footer.textContent = (idx + 1) + ' / ' + totalP;
 
-          leaf.appendChild(content);
-          leaf.appendChild(footer);
+          inner.appendChild(content);
+          inner.appendChild(footer);
+          leaf.appendChild(inner);
           frag.appendChild(leaf);
           leafEls.push(leaf);
         });
         book.appendChild(frag);
 
-        const pageFlip = createRsBookCurl(book, leafEls, {
+        const pageFlip = mountOptimizedPageFlip(book, leafEls, {
           width: targetW,
           height: targetH,
           startPage: startPage - 1,
-          flippingTime: 320,
+          flippingTime: 360,
         });
         window.__pageFlip = pageFlip;
 
-        pageFlip.on('flip', (e) => {
-          window.__readerState.lastFlipTime = Date.now();
-          const p = e.data + 1;
-          playPaperTurnSound();
-          updateScrubber(p, totalP);
-          showScrubberBriefly();
-        });
+        if (pageFlip) {
+          pageFlip.on('flip', (e) => {
+            window.__readerState.lastFlipTime = Date.now();
+            const p = e.data + 1;
+            playPaperTurnSound();
+            updateScrubber(p, totalP);
+            showScrubberBriefly();
+          });
 
-        attachZoomAndPanHandlers(document.getElementById('rsStage'), pageFlip);
+          attachZoomAndPanHandlers(document.getElementById('rsStage'), pageFlip);
 
-        window.rsNextPage = () => {
-          if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
-          pageFlip.flipNext();
-          showScrubberBriefly();
-        };
-        window.rsPrevPage = () => {
-          if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
-          pageFlip.flipPrev();
-          showScrubberBriefly();
-        };
-        window.rsGoToPage = (p) => {
-          pageFlip.turnToPage(Math.max(0, Math.min(totalP - 1, p - 1)));
-          showScrubberBriefly();
-        };
+          window.rsNextPage = () => {
+            if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
+            pageFlip.flipNext();
+            showScrubberBriefly();
+          };
+          window.rsPrevPage = () => {
+            if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
+            pageFlip.flipPrev();
+            showScrubberBriefly();
+          };
+          window.rsGoToPage = (p) => {
+            pageFlip.turnToPage(Math.max(0, Math.min(totalP - 1, p - 1)));
+            showScrubberBriefly();
+          };
+        }
 
         updateScrubber(startPage, totalP);
         return;
@@ -2336,7 +2231,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
 
       try {
         if (docKind === 'pdf') {
-          if (!docBase64) {
+          if (!docBase64 && !window.__rsPdf) {
             root.innerHTML = '<div class="loading-spinner">' +
               '<div style="font-size:36px; margin-bottom:8px;">⚠️</div>' +
               '<div style="font-weight:700; font-size:15px;">Could not load ' + escapeHtml(docName) + '</div>' +
@@ -2358,13 +2253,11 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
           let pdf = window.__rsPdf;
           if (!pdf) {
             const pdfBytes = base64ToUint8Array(docBase64);
-            let workerCode = '';
-            if (pdfWorkerB64) {
-              try { workerCode = atob(pdfWorkerB64); } catch (e) {}
-            }
             try {
-              if (workerCode && typeof Blob !== 'undefined' && typeof URL !== 'undefined' && URL.createObjectURL) {
-                const blobUrl = URL.createObjectURL(new Blob([workerCode], { type: 'text/javascript' }));
+              if (pdfWorkerB64 && typeof Blob !== 'undefined' && typeof URL !== 'undefined' && URL.createObjectURL) {
+                const workerBytes = base64ToUint8Array(pdfWorkerB64);
+                const blobUrl = URL.createObjectURL(new Blob([workerBytes], { type: 'text/javascript' }));
+                window.__rsPdfWorkerUrl = blobUrl;
                 pdfLib.GlobalWorkerOptions.workerSrc = blobUrl;
                 pdf = await pdfLib.getDocument({
                   data: pdfBytes,
@@ -2374,17 +2267,23 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
                 throw new Error('No Blob URL');
               }
             } catch (workerErr) {
-              if (workerCode && !window.pdfjsWorker) {
-                try { (0, eval)(workerCode); } catch (e) {}
+              if (pdfWorkerB64 && !window.pdfjsWorker) {
+                try {
+                  const workerCode = decodeUtf8Base64(pdfWorkerB64);
+                  (0, eval)(workerCode);
+                } catch (e) {}
               }
               pdfLib.GlobalWorkerOptions.workerSrc = 'data:text/javascript,';
+              const fallbackBytes = pdfBytes && pdfBytes.byteLength > 0 ? pdfBytes : base64ToUint8Array(docBase64);
               pdf = await pdfLib.getDocument({
-                data: base64ToUint8Array(docBase64),
+                data: fallbackBytes,
                 disableWorker: true,
                 isEvalSupported: false,
               }).promise;
             }
             window.__rsPdf = pdf;
+            docBase64 = '';
+            pdfWorkerB64 = '';
           }
           const totalPages = pdf.numPages;
 
@@ -2418,7 +2317,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
             for (let i = 1; i <= totalPages; i++) {
               const wrap = document.createElement('div');
               wrap.className = 'page-canvas-wrap';
-              wrap.style.display = 'none';
+              wrap.dataset.density = 'soft';
 
               const canvasHost = document.createElement('div');
               canvasHost.className = 'rs-canvas-host';
@@ -2437,9 +2336,10 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
 
             function evictDistantCanvases(centerPage) {
               for (let i = 1; i <= totalPages; i++) {
-                if (Math.abs(i - centerPage) <= 4) continue;
+                if (Math.abs(i - centerPage) <= 2) continue;
                 const host = document.getElementById('rsPdfCanvasHost_' + i);
                 if (host && host.dataset.rendered === 'true') {
+                  zeroCanvasesIn(host);
                   delete host.dataset.rendered;
                   host.innerHTML = '<div style="color:var(--muted); font-size:12px;">Rendering…</div>';
                 }
@@ -2449,10 +2349,14 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
             async function renderPageCanvas(pNum) {
               if (pNum < 1 || pNum > totalPages) return;
               const host = document.getElementById('rsPdfCanvasHost_' + pNum);
-              if (!host || host.dataset.rendered === 'true' || host.dataset.rendered === 'loading') return;
+              if (!host || !document.body.contains(host) || host.dataset.rendered === 'true' || host.dataset.rendered === 'loading') return;
               host.dataset.rendered = 'loading';
               try {
                 const page = await pdf.getPage(pNum);
+                if (!document.body.contains(host)) {
+                  try { page.cleanup(); } catch (e) {}
+                  return;
+                }
                 const vpPage1 = page.getViewport({ scale: 1 });
                 const pageScale = Math.min(targetW / vpPage1.width, targetH / vpPage1.height) * dpr;
                 const vp = page.getViewport({ scale: pageScale });
@@ -2470,9 +2374,22 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
                 }
                 await page.render({ canvasContext: ctx, viewport: vp }).promise;
                 try { page.cleanup(); } catch (e) {}
+                if (!document.body.contains(host)) {
+                  canvas.width = 0;
+                  canvas.height = 0;
+                  return;
+                }
                 host.innerHTML = '';
                 host.appendChild(canvas);
                 host.dataset.rendered = 'true';
+                if (window.__pageFlip && window.__pageFlip.getPageCollection) {
+                  try {
+                    const pObj = window.__pageFlip.getPageCollection().getPage(pNum - 1);
+                    if (pObj && pObj.copiedElement) {
+                      syncCanvasBitmaps(pObj.getElement(), pObj.copiedElement);
+                    }
+                  } catch (e) {}
+                }
               } catch (err) {
                 delete host.dataset.rendered;
                 console.warn('pdf render err', err);
@@ -2486,14 +2403,11 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
 
             await renderPageCanvas(startPage);
 
-            const pageFlip = createRsBookCurl(book, wrapEls, {
+            const pageFlip = mountOptimizedPageFlip(book, wrapEls, {
               width: targetW,
               height: targetH,
               startPage: startPage - 1,
-              flippingTime: 340,
-              onBeforeFlip: (toIdx) => {
-                void renderPageCanvas(toIdx + 1);
-              },
+              flippingTime: 380,
             });
             window.__pageFlip = pageFlip;
 
@@ -2503,74 +2417,85 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
               if (startPage - 1 >= 1) void renderPageCanvas(startPage - 1);
             }, 60);
 
-            pageFlip.on('flip', (e) => {
-              window.__readerState.lastFlipTime = Date.now();
-              const p = e.data + 1;
-              playPaperTurnSound();
-              updateScrubber(p, totalPages);
-              showScrubberBriefly();
-              evictDistantCanvases(p);
-              clearTimeout(prefetchTimer);
-              void renderPageCanvas(p);
-              prefetchTimer = setTimeout(() => {
-                if (pageFlip.getState() !== 'read') return;
-                if (p + 1 <= totalPages) void renderPageCanvas(p + 1);
-                if (p - 1 >= 1) void renderPageCanvas(p - 1);
-              }, 45);
-            });
+            if (pageFlip) {
+              pageFlip.on('changeState', (e) => {
+                if (e.data === 'user_fold' || e.data === 'flipping' || e.data === 'fold_corner') {
+                  const curIdx = pageFlip.getCurrentPageIndex();
+                  void renderPageCanvas(curIdx + 1);
+                  if (curIdx + 2 <= totalPages) void renderPageCanvas(curIdx + 2);
+                  if (curIdx >= 1) void renderPageCanvas(curIdx);
+                }
+              });
 
-            attachZoomAndPanHandlers(document.getElementById('rsStage'), pageFlip);
+              pageFlip.on('flip', (e) => {
+                window.__readerState.lastFlipTime = Date.now();
+                const p = e.data + 1;
+                playPaperTurnSound();
+                updateScrubber(p, totalPages);
+                showScrubberBriefly();
+                evictDistantCanvases(p);
+                clearTimeout(prefetchTimer);
+                void renderPageCanvas(p);
+                prefetchTimer = setTimeout(() => {
+                  if (pageFlip.getState() !== 'read') return;
+                  if (p + 1 <= totalPages) void renderPageCanvas(p + 1);
+                  if (p - 1 >= 1) void renderPageCanvas(p - 1);
+                }, 45);
+              });
 
-            window.rsNextPage = async () => {
-              if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
-              const nextP = Math.min(totalPages, pageFlip.getCurrentPageIndex() + 2);
-              await renderPageCanvas(nextP);
-              pageFlip.flipNext();
-              showScrubberBriefly();
-            };
-            window.rsPrevPage = async () => {
-              if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
-              const prevP = Math.max(1, pageFlip.getCurrentPageIndex());
-              await renderPageCanvas(prevP);
-              pageFlip.flipPrev();
-              showScrubberBriefly();
-            };
-            let goToSeq = 0;
-            window.rsGoToPage = async (p) => {
-              const seq = ++goToSeq;
-              const target = Math.max(1, Math.min(totalPages, p));
-              evictDistantCanvases(target);
-              await renderPageCanvas(target);
-              if (seq !== goToSeq) return;
-              pageFlip.turnToPage(target - 1);
-              showScrubberBriefly();
-              clearTimeout(prefetchTimer);
-              prefetchTimer = setTimeout(() => {
-                if (target + 1 <= totalPages) void renderPageCanvas(target + 1);
-                if (target - 1 >= 1) void renderPageCanvas(target - 1);
-              }, 60);
-            };
+              attachZoomAndPanHandlers(document.getElementById('rsStage'), pageFlip);
+
+              window.rsNextPage = async () => {
+                if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
+                const nextP = Math.min(totalPages, pageFlip.getCurrentPageIndex() + 2);
+                await renderPageCanvas(nextP);
+                pageFlip.flipNext();
+                showScrubberBriefly();
+              };
+              window.rsPrevPage = async () => {
+                if (window.__readerState.currentZoom > 1.05 && window.resetZoom) window.resetZoom();
+                const prevP = Math.max(1, pageFlip.getCurrentPageIndex());
+                await renderPageCanvas(prevP);
+                pageFlip.flipPrev();
+                showScrubberBriefly();
+              };
+              let goToSeq = 0;
+              window.rsGoToPage = async (p) => {
+                const seq = ++goToSeq;
+                const target = Math.max(1, Math.min(totalPages, p));
+                evictDistantCanvases(target);
+                await renderPageCanvas(target);
+                if (seq !== goToSeq) return;
+                pageFlip.turnToPage(target - 1);
+                showScrubberBriefly();
+                clearTimeout(prefetchTimer);
+                prefetchTimer = setTimeout(() => {
+                  if (target + 1 <= totalPages) void renderPageCanvas(target + 1);
+                  if (target - 1 >= 1) void renderPageCanvas(target - 1);
+                }, 60);
+              };
+            }
 
             updateScrubber(startPage, totalPages);
           } else {
-            // Continuous Vertical Scroll Mode (Original Proven PDF Engine)
+            // Continuous Vertical Scroll Mode (Memory-safe lazy PDF engine)
             root.innerHTML = '<div class="pdf-container" id="pdfRoot"></div>';
             const pdfRoot = document.getElementById('pdfRoot');
             const placeholders = [];
+            let defaultAspect = '1 / 1.414';
+            try {
+              const p1 = await pdf.getPage(1);
+              const v1 = p1.getViewport({ scale: 1 });
+              defaultAspect = v1.width + ' / ' + v1.height;
+            } catch (e) {}
 
             for (let i = 1; i <= totalPages; i++) {
               const pageDiv = document.createElement('div');
               pageDiv.className = 'pdf-page';
               pageDiv.dataset.pageNumber = String(i);
+              pageDiv.style.aspectRatio = defaultAspect;
               pdfRoot.appendChild(pageDiv);
               placeholders.push(pageDiv);
-              (async () => {
-                try {
-                  const p = await pdf.getPage(i);
-                  const v1 = p.getViewport({ scale: 1 });
-                  pageDiv.style.aspectRatio = v1.width + ' / ' + v1.height;
-                } catch (e) {}
-              })();
             }
 
             const renderingNow = new Set();
@@ -2588,11 +2513,14 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
             const renderOne = async (pageDiv) => {
               const num = Number(pageDiv.dataset.pageNumber);
               renderingNow.add(pageDiv);
+              let page = null;
               try {
-                const page = await pdf.getPage(num);
+                page = await pdf.getPage(num);
+                if (!document.body.contains(pageDiv)) return;
                 const vp1 = page.getViewport({ scale: 1 });
+                pageDiv.style.aspectRatio = vp1.width + ' / ' + vp1.height;
                 const cssWidth = Math.round(pageDiv.clientWidth || document.documentElement.clientWidth - 20);
-                const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+                const dpr = Math.min(Math.max(window.devicePixelRatio || 1.5, 1.5), 2);
                 const renderScale = (cssWidth / vp1.width) * dpr;
                 const viewport = page.getViewport({ scale: renderScale });
 
@@ -2608,6 +2536,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
                 canvas.style.width = '100%';
                 canvas.style.height = '100%';
                 wrap.appendChild(canvas);
+                zeroCanvasesIn(pageDiv);
                 pageDiv.innerHTML = '';
                 pageDiv.appendChild(wrap);
 
@@ -2620,7 +2549,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
 
                 try {
                   const content = await page.getTextContent();
-                  if (content && content.items.length > 0) {
+                  if (content && content.items.length > 0 && document.body.contains(wrap)) {
                     const layer = document.createElement('div');
                     layer.className = 'textLayer';
                     layer.style.position = 'absolute';
@@ -2629,12 +2558,16 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
                     layer.style.lineHeight = '1';
                     wrap.appendChild(layer);
                     const textViewport = page.getViewport({ scale: (cssWidth / vp1.width) });
+                    layer.style.setProperty('--scale-factor', String(textViewport.scale));
                     (pdfLib || window.pdfjsLib).renderTextLayer({ textContentSource: content, container: layer, viewport: textViewport });
                   }
                 } catch (e) {}
               } catch (e) {
                 console.warn('pdf page render failed', e);
               } finally {
+                if (page) {
+                  try { page.cleanup(); } catch (e) {}
+                }
                 renderingNow.delete(pageDiv);
                 pump();
               }
@@ -2660,6 +2593,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
                   const box = el.getBoundingClientRect();
                   const margin = (window.innerHeight || 900) * 2.5;
                   if (box.bottom < -margin || box.top > (window.innerHeight || 900) + margin) {
+                    zeroCanvasesIn(el);
                     el.innerHTML = '';
                     delete el.dataset.rendered;
                     renderingNow.delete(el);
@@ -2673,16 +2607,25 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
             pump();
 
             window.rsGoToPage = (p) => {
-              const el = placeholders[p - 1];
-              if (el) el.scrollIntoView({ behavior: 'smooth' });
+              const target = Math.max(1, Math.min(totalPages, p));
+              suppressScrollIoUntil = Date.now() + 450;
+              updateScrubber(target, totalPages);
+              const el = placeholders[target - 1];
+              if (el) el.scrollIntoView({ behavior: 'auto' });
             };
             window.rsNextPage = () => {
               const nextP = Math.min(totalPages, window.__readerState.page + 1);
-              window.rsGoToPage(nextP);
+              suppressScrollIoUntil = Date.now() + 450;
+              updateScrubber(nextP, totalPages);
+              const el = placeholders[nextP - 1];
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
             };
             window.rsPrevPage = () => {
               const prevP = Math.max(1, window.__readerState.page - 1);
-              window.rsGoToPage(prevP);
+              suppressScrollIoUntil = Date.now() + 450;
+              updateScrubber(prevP, totalPages);
+              const el = placeholders[prevP - 1];
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
             };
             updateScrubber(scrollStartPage, totalPages);
             if (scrollStartPage > 1 && placeholders[scrollStartPage - 1]) {
@@ -2691,6 +2634,9 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
           }
         } else if (docKind === 'pptx') {
           if (!docBase64) throw new Error('No PPTX data');
+          if (typeof JSZip === 'undefined') {
+            await new Promise((r) => setTimeout(r, 150));
+          }
           const zip = await JSZip.loadAsync(base64ToUint8Array(docBase64));
           const slideFiles = [];
           zip.forEach((path) => {
@@ -2706,20 +2652,44 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
             const xml = await zip.file(slideFiles[i].path).async('string');
             const sDoc = parser.parseFromString(xml, 'application/xml');
             let title = 'Slide ' + (i + 1);
-            const titleEl = sDoc.querySelector('p\\:sp p\\:ph[type="title"], p\\:sp p\\:ph[type="ctrTitle"]');
-            if (titleEl) {
-              const textEl = titleEl.closest('p\\:sp')?.querySelector('a\\:t');
-              if (textEl && textEl.textContent) title = textEl.textContent.trim();
+            const shapes = sDoc.getElementsByTagNameNS('*', 'sp');
+            for (let si = 0; si < shapes.length; si++) {
+              const phs = shapes[si].getElementsByTagNameNS('*', 'ph');
+              let isTitle = false;
+              for (let pi = 0; pi < phs.length; pi++) {
+                const tAttr = phs[pi].getAttribute('type') || '';
+                if (tAttr === 'title' || tAttr === 'ctrTitle') {
+                  isTitle = true;
+                  break;
+                }
+              }
+              if (isTitle) {
+                const ts = shapes[si].getElementsByTagNameNS('*', 't');
+                const parts = [];
+                for (let ti = 0; ti < ts.length; ti++) {
+                  if (ts[ti].textContent) parts.push(ts[ti].textContent);
+                }
+                const joined = parts.join('').trim();
+                if (joined) {
+                  title = joined;
+                  break;
+                }
+              }
             }
 
             const bullets = [];
-            const textNodes = sDoc.querySelectorAll('a\\:p');
-            textNodes.forEach(p => {
-              const t = p.textContent?.trim();
+            const paras = sDoc.getElementsByTagNameNS('*', 'p');
+            for (let pi = 0; pi < paras.length; pi++) {
+              const ts = paras[pi].getElementsByTagNameNS('*', 't');
+              const parts = [];
+              for (let ti = 0; ti < ts.length; ti++) {
+                if (ts[ti].textContent) parts.push(ts[ti].textContent);
+              }
+              const t = parts.join('').trim();
               if (t && t !== title) bullets.push(t);
-            });
+            }
 
-            slidesHtml += 
+            slidesHtml +=
               '<div class="pptx-card">' +
                 '<h3 class="pptx-slide-title">Slide ' + (i + 1) + ': ' + escapeHtml(title) + '</h3>' +
                 '<div class="pptx-bullets">' +
@@ -2728,8 +2698,7 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
               '</div>';
           }
 
-          root.innerHTML = '<div class="pptx-container">' + slidesHtml + '</div>';
-          updateScrubber(1, Math.max(1, slideFiles.length));
+          await renderHtmlContent(slidesHtml || '<p>No slides found in presentation.</p>');
         } else if (docKind === 'audio') {
           const audioUrl = docStreamUrl || docUri || (docBase64 ? 'data:audio/mpeg;base64,' + docBase64 : '');
           root.innerHTML = '<div class="audio-wrap">' +
@@ -2771,6 +2740,26 @@ export function buildReaderHtml(doc: MobileDoc, settings: ReaderSettings, themeC
               fill.style.width = (audio.currentTime / audio.duration * 100) + '%';
             }
           };
+        } else if (docKind === 'image') {
+          const ext = (docName.split('.').pop() || '').toLowerCase();
+          const mimeMap = {
+            svg: 'image/svg+xml',
+            png: 'image/png',
+            webp: 'image/webp',
+            gif: 'image/gif',
+            bmp: 'image/bmp',
+            ico: 'image/x-icon',
+            avif: 'image/avif',
+          };
+          const imgMime = docMime || mimeMap[ext] || 'image/jpeg';
+          const imgSrc = docBase64
+            ? (docBase64.indexOf('data:') === 0 ? docBase64 : 'data:' + imgMime + ';base64,' + docBase64)
+            : (docStreamUrl || docUri || '');
+          root.innerHTML = '<div class="image-viewer-container">' +
+            '<img src="' + imgSrc + '" alt="' + escapeHtml(docName) + '" class="responsive-image" />' +
+            '<div class="image-info-bar">' + escapeHtml(docName) + '</div>' +
+          '</div>';
+          updateScrubber(1, 1);
         } else if (docKind === 'video') {
           const videoUrl = docStreamUrl || docUri || (docBase64 ? 'data:video/mp4;base64,' + docBase64 : '');
           root.innerHTML = '<div class="video-wrap">' +

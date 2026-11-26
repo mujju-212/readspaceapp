@@ -92,6 +92,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
   const theme = THEMES[settings.theme];
   const insets = useSafeAreaInsets();
   const lastPositionSaveRef = useRef(0);
+  const tabScrollRef = useRef<ScrollView>(null);
 
   // Preload recent documents to populate the tab switcher bar
   useEffect(() => {
@@ -118,6 +119,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
     setOpenTabs((prev) =>
       [tabDoc, ...prev.filter((t) => t.id !== tabDoc.id)].slice(0, 8)
     );
+    tabScrollRef.current?.scrollTo({ x: 0, animated: true });
   };
 
   // Central open-doc handler so files opened from the explorer sidebar also
@@ -130,6 +132,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
       const deduped = prev.filter((t) => t.id !== newDoc.id);
       return [newDoc, ...deduped].slice(0, 8);
     });
+    tabScrollRef.current?.scrollTo({ x: 0, animated: true });
   };
 
   const handleCloseTab = (e: any, tabId: string) => {
@@ -152,13 +155,10 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
       const picked = await pickDocuments();
       if (picked && picked.length > 0) {
         const newDoc = picked[0];
-        await Storage.saveDoc(newDoc);
-        setOpenTabs((prev) => {
-          const existing = prev.find((t) => t.id === newDoc.id);
-          if (existing) return prev;
-          return [newDoc, ...prev];
-        });
+        void Storage.saveDoc(newDoc);
+        setOpenTabs((prev) => [newDoc, ...prev.filter((t) => t.id !== newDoc.id)].slice(0, 8));
         setCurrentDoc(newDoc);
+        tabScrollRef.current?.scrollTo({ x: 0, animated: true });
       }
     } catch (err: any) {
       console.warn('Could not pick new file:', err);
@@ -236,6 +236,13 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
     if (position?.page === undefined && now - lastPositionSaveRef.current < 700) return;
     lastPositionSaveRef.current = now;
     Storage.updatePosition(currentDoc.id, position);
+    setOpenTabs((prev) =>
+      prev.map((t) =>
+        t.id === currentDoc.id
+          ? { ...t, position: { ...t.position, ...position }, lastOpenedAt: now }
+          : t
+      )
+    );
     if (currentDoc.driveFileId) {
       void Storage.getSavedLinks().then((links) => {
         const matching = links.find((l) => l.fileId === currentDoc.driveFileId || l.folderId === currentDoc.driveFileId);
@@ -310,6 +317,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => navigation.goBack()}
+            accessibilityLabel="Go back"
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <ArrowLeft size={20} color={theme.fg} />
@@ -402,6 +410,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
       {!isZenMode && (
         <View style={[styles.tabBarContainer, { backgroundColor: theme.panel, borderBottomColor: theme.border }]}>
           <ScrollView
+            ref={tabScrollRef}
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.tabScrollContent}
@@ -455,7 +464,7 @@ export const ReaderScreen: React.FC<ReaderScreenProps> = ({
               accessibilityLabel="Open new file"
             >
               <Plus size={13} color={theme.accent} />
-              <Text style={[styles.newTabText, { color: theme.accent }]}>+ File</Text>
+              <Text style={[styles.newTabText, { color: theme.accent }]}>File</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -978,9 +987,9 @@ const styles = StyleSheet.create({
   fontSizeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 24,
-    marginBottom: 24,
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 0,
   },
   fontBtn: {
     width: 44,

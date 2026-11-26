@@ -97,11 +97,12 @@ export const Storage = {
     } else {
       next = [doc, ...docs];
     }
-    memoryDocsCache = next;
+    const bounded = this.stripOversized(next).slice(0, 100);
+    memoryDocsCache = bounded;
     if (saveDocsDebounceTimer) clearTimeout(saveDocsDebounceTimer);
     saveDocsDebounceTimer = setTimeout(() => {
       saveDocsDebounceTimer = null;
-      void persistDocsList(next);
+      void persistDocsList(bounded);
     }, 250);
   },
 

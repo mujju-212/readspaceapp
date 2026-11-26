@@ -268,6 +268,7 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
   const themeColors = THEMES[settings.theme];
 
   const [dataOverride, setDataOverride] = useState<string | undefined>(undefined);
+  const [webViewCrashKey, setWebViewCrashKey] = useState(0);
   const isDriveDoc = Boolean(
     doc.isDrive ||
     doc.driveFileId ||
@@ -294,6 +295,7 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
 
   useEffect(() => {
     setDataOverride(undefined);
+    setWebViewCrashKey(0);
     if (doc.base64Data) {
       setIsFileReading(false);
       return;
@@ -561,12 +563,14 @@ export const HybridReader: React.FC<HybridReaderProps> = ({ doc, settings, onPos
     <View style={styles.container}>
       {NativeWebView ? (
         <NativeWebView
-          key={`${doc.id || doc.name}_${effectiveDoc.base64Data ? 'ready' : 'empty'}`}
+          key={`${doc.id || doc.name}_${effectiveDoc.base64Data ? 'ready' : 'empty'}_${webViewCrashKey}`}
           ref={webViewRef}
           originWhitelist={['*']}
           source={{ html: htmlContent }}
           onMessage={handleMessage}
           onLoadEnd={handleWebViewLoaded}
+          onRenderProcessGone={() => setWebViewCrashKey((k) => k + 1)}
+          onContentProcessDidTerminate={() => setWebViewCrashKey((k) => k + 1)}
           javaScriptEnabled={true}
           domStorageEnabled={true}
           allowFileAccess={true}
